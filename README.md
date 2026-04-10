@@ -100,13 +100,34 @@ most recent (and more turbulent) 2015–2020 period.
 
 ```
 Pergam_MSc_2026/
+├── README.md
+├── requirements.txt            # Planned Python dependencies
 ├── documentation/              # Reference paper (PDF) and notes
-│   └── jfds.2021.1.081.full 1.pdf
-└── README.md
+├── configs/                    # YAML configs (assets, horizons, hyperparams)
+│   └── default.yaml
+├── data/                       # Gitignored
+│   ├── raw/                    # Original Pinnacle / futures CSVs
+│   └── processed/              # Cleaned returns, features, CPD outputs
+├── src/                        # Library code
+│   ├── data_loader.py          # Load raw futures data
+│   ├── preprocessing.py        # Returns, EWM vol, vol scaling
+│   ├── features.py             # Normalized returns + MACD
+│   ├── cpd.py                  # GP Matérn 3/2 + changepoint kernel
+│   ├── model.py                # LSTM DMN + Sharpe loss
+│   ├── backtest.py             # Expanding-window backtest harness
+│   └── metrics.py              # Sharpe, Sortino, Calmar, MDD, hit ratio
+├── scripts/                    # Thin CLI entry points
+│   ├── 01_build_dataset.py
+│   ├── 02_compute_cpd.py
+│   ├── 03_train_dmn.py
+│   └── 04_run_backtest.py
+└── notebooks/
+    └── 00_exploration.ipynb
 ```
 
-Source code, notebooks and data folders will be added as the implementation
-progresses.
+All `src/` modules and `scripts/` are currently placeholders; concrete
+implementations will land in follow-up tasks, mirroring the pipeline
+described below.
 
 ---
 

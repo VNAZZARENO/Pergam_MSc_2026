@@ -1,0 +1,11 @@
+# Planned dependencies for the Slow Momentum with Fast Reversion project.
+# Uncomment / pin versions once the .venv is finalized.
+#
+# numpy
+# pandas
+# scipy
+# matplotlib
+# scikit-learn
+# gpflow
+# tensorflow
+# pyyaml

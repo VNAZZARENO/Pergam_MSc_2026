@@ -1,0 +1,12 @@
+# Default configuration for the Slow Momentum with Fast Reversion pipeline.
+# Values mirror the hyperparameters used in Wood, Roberts & Zohren (2022).
+
+assets: []
+lbw: 21
+horizons: [1, 21, 63, 126, 252]
+macd_pairs:
+  - [8, 24]
+  - [16, 28]
+  - [32, 96]
+vol_target: 0.15
+ewm_span: 60
