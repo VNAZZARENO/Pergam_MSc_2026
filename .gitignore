@@ -12,7 +12,6 @@ __pycache__/
 *.ipynb_checkpoints
 
 # Data artifacts (keep folder structure via .gitkeep)
-data/raw/*
 !data/raw/.gitkeep
 data/processed/*
 !data/processed/.gitkeep
