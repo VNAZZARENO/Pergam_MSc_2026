@@ -1,6 +1,6 @@
 """CLI entry point: train the Deep Momentum Network on one fold.
 
-Placeholder script — no implementation yet.
+Placeholder script, no implementation yet.
 """
 
 from __future__ import annotations

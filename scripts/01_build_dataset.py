@@ -1,6 +1,6 @@
 """CLI entry point: raw futures data -> processed returns + features.
 
-Placeholder script — no implementation yet.
+Placeholder script, no implementation yet.
 """
 
 from __future__ import annotations

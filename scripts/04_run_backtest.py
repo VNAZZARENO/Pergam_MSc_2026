@@ -1,6 +1,6 @@
 """CLI entry point: run the full expanding-window backtest and print metrics.
 
-Placeholder script — no implementation yet.
+Placeholder script, no implementation yet.
 """
 
 from __future__ import annotations

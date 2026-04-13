@@ -1,6 +1,6 @@
 """CLI entry point: precompute (nu, gamma) changepoint scores.
 
-Placeholder script — no implementation yet.
+Placeholder script, no implementation yet.
 """
 
 from __future__ import annotations
