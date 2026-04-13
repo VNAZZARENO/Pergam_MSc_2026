@@ -1,6 +1,6 @@
 """Expanding-window backtest harness.
 
-Placeholder module — no implementation yet.
+Placeholder module, no implementation yet.
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 """Changepoint detection via Gaussian Processes.
 
 Implements (will implement) the Matérn 3/2 kernel fit and the changepoint
-kernel from Wood, Roberts & Zohren (2022). Placeholder module — no
+kernel from Wood, Roberts & Zohren (2022). Placeholder module, no
 implementation yet.
 """
 

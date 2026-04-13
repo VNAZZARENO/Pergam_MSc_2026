@@ -1,1 +1,1 @@
-"""Slow Momentum with Fast Reversion - library package."""
+"""Slow Momentum with Fast Reversion, library package."""

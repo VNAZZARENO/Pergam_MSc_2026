@@ -1,6 +1,6 @@
 """Return computation and volatility scaling.
 
-Placeholder module — no implementation yet.
+Placeholder module, no implementation yet.
 """
 
 from __future__ import annotations
@@ -17,5 +17,5 @@ def ewm_vol(returns, span: int = 60):
 
 
 def vol_scale(returns, target: float = 0.15):
-    """Rescale returns to a target annualized volatility."""
+    """Rescale returns to a target annualized volatility (e.g., 0.15 for 15%)."""
     raise NotImplementedError

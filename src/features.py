@@ -1,6 +1,6 @@
 """Feature engineering: normalized multi-horizon returns and MACD.
 
-Placeholder module — no implementation yet.
+Placeholder module, no implementation yet.
 """
 
 from __future__ import annotations
@@ -16,3 +16,6 @@ def normalized_returns(returns, horizons: Iterable[int]):
 def macd(prices, pairs: Sequence[Tuple[int, int]]):
     """Compute MACD indicators for the given (short, long) pairs."""
     raise NotImplementedError
+
+# TODO: add more features, e.g. volatility, volume, etc
+# Always ensure features are normalized, uncorrelated, and provide additional predictive power.
