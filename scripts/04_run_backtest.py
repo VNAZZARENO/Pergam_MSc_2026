@@ -26,3 +26,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# equivalent to a main.py

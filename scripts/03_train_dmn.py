@@ -27,3 +27,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+
+# Take for input the windows (start, end) of the fold to train on, and the processed dataset.
