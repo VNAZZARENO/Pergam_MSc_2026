@@ -5,6 +5,7 @@
 # pandas
 # scipy
 # matplotlib
+plotly>=5.0
 # scikit-learn
 # gpflow
 # tensorflow
