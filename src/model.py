@@ -7,7 +7,12 @@ only expose the target API.
 
 from __future__ import annotations
 
+# Organisation du fichier :
+# squelette du futur modele DMN, sans choix definitif PyTorch/TensorFlow.
 
+
+# [MODEL] DeepMomentumNetwork
+# API cible du futur modele LSTM qui produira des positions de trading.
 class DeepMomentumNetwork:
     """LSTM-based Deep Momentum Network returning positions in (-1, 1).
 
@@ -19,6 +24,8 @@ class DeepMomentumNetwork:
         raise NotImplementedError
 
 
+# [LOSS] sharpe_loss
+# Fonction de perte prevue pour entrainer le modele a maximiser le Sharpe.
 def sharpe_loss(positions, returns):
     """Negative annualized Sharpe ratio, used as training loss."""
     raise NotImplementedError

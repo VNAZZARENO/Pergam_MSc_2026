@@ -154,7 +154,7 @@ described below.
 
 5. **Improvements and extensions**
    - Transaction cost modeling directly inside the Sharpe loss.
-   - Alternative changepoint methods (BOCPD, ruptures, neural CPD).
+   - Alternative changepoint methods (BOCPD, CUSUM, neural CPD).
    - Alternative architectures (Temporal Fusion Transformer, attention-based
      models).
    - Regime-aware ensembling of multiple LBWs.

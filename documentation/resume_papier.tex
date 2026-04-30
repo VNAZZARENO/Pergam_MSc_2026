@@ -184,7 +184,7 @@ Le LSTM reste \textbf{peu interprétable}. Difficile d'expliquer \emph{pourquoi}
 
 \begin{enumerate}[leftmargin=*]
     \item \textbf{Intégrer les coûts de transaction directement dans la loss Sharpe} $\rightarrow$ c'est le plus important et le plus réaliste.
-    \item \textbf{Tester d'autres méthodes de CPD} : Bayesian Online Changepoint Detection (BOCPD), \texttt{ruptures}, CUSUM, ou même un petit réseau de neurones dédié.
+    \item \textbf{Tester d'autres méthodes de CPD} : Bayesian Online Changepoint Detection (BOCPD), CUSUM, ou même un petit réseau de neurones dédié.
     \item \textbf{Remplacer le LSTM par un Transformer} (Temporal Fusion Transformer) pour voir si l'attention aide.
     \item \textbf{Utiliser plusieurs LBW en parallèle} et laisser le réseau choisir (les auteurs ont essayé et ça n'a pas marché, mais avec une autre architecture ça pourrait).
     \item \textbf{Étendre au post-2020} pour voir si la stratégie tient toujours (inflation 2022, taux qui remontent\ldots).

@@ -7,7 +7,12 @@ from __future__ import annotations
 
 from typing import Callable
 
+# Organisation du fichier :
+# squelette du backtest en fenetre expansive pour evaluation hors echantillon.
 
+
+# [BACKTEST] expanding_window_backtest
+# Entraine sur une fenetre qui grandit, puis teste sur la periode suivante.
 def expanding_window_backtest(data, model_fn: Callable, folds):
     """Run an expanding-window backtest.
 
