@@ -1,27 +1,132 @@
-"""CLI entry point: run the full expanding-window backtest and print metrics.
+"""Run the first STOXX 600 rule-based backtest.
 
-Placeholder script, no implementation yet.
+This is not yet the full LSTM/DMN from the paper. It is the first complete
+trading experiment: slow momentum, fast reversion and optional CPD adjustment.
 """
 
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+sys.modules.setdefault("numexpr", None)
+sys.modules.setdefault("bottleneck", None)
+
+import pandas as pd
+
+from src.backtest import run_rule_based_backtest
+
+
+PANEL_COLUMNS = [
+    "date",
+    "ticker",
+    "1d_arith_ret",
+    "21d_arith_ret",
+    "252d_arith_ret",
+]
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run the full expanding-window backtest.",
+        description="Run a transparent slow-momentum / fast-reversion backtest.",
     )
-    parser.add_argument("--config", default="configs/default.yaml")
-    parser.add_argument("--data-dir", default="data/processed")
+    parser.add_argument("--data-dir", default="data/processed/stoxx600")
+    parser.add_argument("--panel-file", default="stoxx600_processed.csv")
+    parser.add_argument("--cpd-file", default="cpd_scores_fast.csv")
+    parser.add_argument("--out-returns", default="backtest_returns.csv")
+    parser.add_argument("--out-summary", default="backtest_summary.csv")
+    parser.add_argument("--start-date", default="2006-01-02")
+    parser.add_argument("--end-date", default=None)
+    parser.add_argument("--cost-bps", type=float, default=1.0)
+    parser.add_argument("--target-vol", type=float, default=0.15)
+    parser.add_argument(
+        "--max-tickers",
+        type=int,
+        default=None,
+        help="Optional cap for quick checks. Full run uses all tickers.",
+    )
     return parser
 
 
+def _resolve(path):
+    path = Path(path)
+    return path if path.is_absolute() else PROJECT_ROOT / path
+
+
+def load_panel(data_dir, panel_file, max_tickers=None):
+    """Load only the columns needed by the backtest."""
+    path = data_dir / panel_file
+    panel = pd.read_csv(path, usecols=PANEL_COLUMNS, parse_dates=["date"])
+    panel = panel.dropna(subset=["ticker"])
+    if max_tickers is not None:
+        tickers = list(dict.fromkeys(panel["ticker"].astype(str)))[:max_tickers]
+        panel = panel.loc[panel["ticker"].isin(tickers)]
+    return panel
+
+
+def load_cpd_scores(data_dir, cpd_file):
+    """Load stock-level sector-relative CPD scores when available."""
+    path = data_dir / cpd_file
+    if not path.exists():
+        return pd.DataFrame(columns=["date", "ticker", "ensemble_score"])
+
+    usecols = ["date", "scope", "ticker", "series_type", "ensemble_score"]
+    cpd = pd.read_csv(
+        path,
+        usecols=usecols,
+        parse_dates=["date"],
+        dtype={"scope": "string", "ticker": "string", "series_type": "string"},
+        low_memory=False,
+    )
+    cpd = cpd.loc[
+        (cpd["scope"] == "stock")
+        & (cpd["series_type"] == "stock_vs_sector")
+        & cpd["ticker"].notna()
+    ]
+    return cpd[["date", "ticker", "ensemble_score"]].drop_duplicates(
+        subset=["date", "ticker"],
+        keep="last",
+    )
+
+
 def main() -> None:
-    parser = build_parser()
-    args = parser.parse_args()
-    _ = args
-    raise NotImplementedError
+    args = build_parser().parse_args()
+    data_dir = _resolve(args.data_dir)
+    panel = load_panel(data_dir, args.panel_file, max_tickers=args.max_tickers)
+    cpd = load_cpd_scores(data_dir, args.cpd_file)
+    if not cpd.empty:
+        panel = panel.merge(cpd, on=["date", "ticker"], how="left")
+
+    returns, summary = run_rule_based_backtest(
+        panel,
+        cost_bps=args.cost_bps,
+        target_vol=args.target_vol,
+        start_date=args.start_date,
+        end_date=args.end_date,
+    )
+
+    returns_path = data_dir / args.out_returns
+    summary_path = data_dir / args.out_summary
+    returns.to_csv(returns_path, index=False)
+    summary.to_csv(summary_path, index=False)
+
+    printable = summary.copy()
+    percent_cols = ["ann_return", "ann_vol", "max_drawdown", "hit_ratio", "avg_turnover"]
+    for col in percent_cols:
+        printable[col] = printable[col].map(lambda x: f"{x:.2%}")
+    for col in ["sharpe", "sortino", "calmar", "avg_assets"]:
+        printable[col] = printable[col].map(lambda x: f"{x:.2f}")
+
+    print("Backtest finished")
+    print(f"Rows loaded: {len(panel):,}")
+    print(f"Date range: {panel['date'].min().date()} -> {panel['date'].max().date()}")
+    print(f"Tickers: {panel['ticker'].nunique():,}")
+    print(f"Returns: {returns_path}")
+    print(f"Summary: {summary_path}")
+    print(printable.to_string(index=False))
 
 
 if __name__ == "__main__":
