@@ -183,6 +183,37 @@ def run_rule_based_backtest(
     return returns_by_strategy, summary
 
 
+def run_position_backtest(
+    panel,
+    positions,
+    position_col="dmn_lite_position",
+    cost_bps=1.0,
+    target_vol=0.15,
+    start_date=None,
+    end_date=None,
+):
+    """Backtest externally generated stock-level positions."""
+    data = panel.copy()
+    data["date"] = pd.to_datetime(data["date"])
+    positions = positions[["date", "ticker", position_col]].copy()
+    positions["date"] = pd.to_datetime(positions["date"])
+    data = data.merge(positions, on=["date", "ticker"], how="inner")
+
+    if start_date is not None:
+        data = data.loc[data["date"] >= pd.Timestamp(start_date)]
+    if end_date is not None:
+        data = data.loc[data["date"] <= pd.Timestamp(end_date)]
+
+    returns = portfolio_returns(
+        data,
+        position_col=position_col,
+        cost_bps=cost_bps,
+        target_vol=target_vol,
+    )
+    summary = performance_summary(returns)
+    return returns, summary
+
+
 def expanding_window_backtest(data, model_fn: Callable, folds: Iterable):
     """Run a generic expanding-window backtest for later model experiments."""
     results = []
