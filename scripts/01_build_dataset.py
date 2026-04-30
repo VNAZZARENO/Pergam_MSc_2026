@@ -61,7 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--raw-dir", default="data/raw/stoxx600")
     parser.add_argument("--out-dir", default="data/processed/stoxx600")
-    parser.add_argument("--start-year", type=int, default=2013)
+    parser.add_argument("--start-year", type=int, default=2006)
     parser.add_argument("--end-year", type=int, default=2026)
     parser.add_argument("--ffill-limit", type=int, default=5)
     parser.add_argument("--min-price", type=float, default=0.01)
@@ -73,9 +73,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--price-source",
         choices=["excel", "yearly"],
-        default="excel",
-        help="Use the PRICE ATLAS workbook by default, matching notebook 01. "
-             "Use 'yearly' to rebuild from annual CSV files plus the Excel tail.",
+        default="yearly",
+        help="Use annual CSV files from 2006-2024 plus the PRICE ATLAS Excel tail "
+             "for 2025-2026 by default. Use 'excel' to match notebook 01 only.",
     )
     parser.add_argument(
         "--universe-json",
