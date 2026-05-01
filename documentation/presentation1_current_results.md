@@ -11,7 +11,7 @@ along the way.
 | Step | What changed | Why it mattered | Current status |
 |---|---|---|---|
 | Git branch | Work moved and pushed on `justine/submission`. | Vincent explicitly asked everyone to work on a Git branch. | Done. |
-| Data source | `01_build_dataset.py` now starts in 2006 and uses yearly CSV files by default, then appends the PRICE ATLAS Excel tail for 2025-2026. | The Excel workbook alone starts in 2013, while Vincent asked for a 2006-to-today backtest. | Done. |
+| Data source | `01_build_dataset.py` now starts in 2006 and uses yearly CSV files by default, then appends the PRICE ATLAS Excel tail for 2025-2026. | The Excel workbook alone starts in 2013, while Vincent asked for a 2006-to-today backtest. | Done and rebuilt. |
 | Long-format panel | Built `stoxx600_processed.csv` with price, returns, volatility, metadata and relative returns. | This matches the requested format: `date`, `ticker`, `price`, features. | Done. |
 | Idiosyncratic returns | Added market-relative and sector-relative returns. | Vincent highlighted idiosyncratic shocks as the useful detection target, not only macro shocks. | Done, can be improved with earnings dates later. |
 | CPD layer | Implemented fast CPD scores and GP-style reference logic. | The paper's key contribution is the CPD signal; the fast layer makes experiments scalable. | Done, but full 2006-2026 CPD refresh should be checked. |
@@ -84,6 +84,28 @@ The main correction was the data source. Initially, the Excel workbook looked
 like the natural source, but it only starts in 2013. Because Vincent asked for a
 2006-to-today backtest, the pipeline was corrected to use yearly CSV files for
 2006-2024 and the Excel workbook only for the 2025-2026 tail.
+
+The interpretation is now:
+
+- `prices_2006.csv` to `prices_2024.csv` are raw historical price files. They
+  are read-only inputs and must not be modified.
+- `2025_2026_PRICE_ATLAS_data_sxxr_static.xlsx` is used for the 2025-2026 price
+  tail and for the static universe / metadata reference.
+- All transformations, feature engineering and cleaning outputs are written
+  downstream in `data/processed/stoxx600/`.
+
+This is consistent with Vincent's instruction: the static 2025-2026 workbook is
+the universe reference, while the annual CSV files provide the historical price
+depth needed for a 2006-to-today empirical backtest.
+
+Latest rebuild check:
+
+- `stoxx600_processed.csv` date range: 2006-01-02 to 2026-04-10.
+- Feature rows: 1,705,321.
+- Unique tickers observed across the full raw history: 828.
+- Duplicate `(date, ticker)` rows: 0.
+- The raw annual CSV files remain unchanged; only processed outputs are
+  regenerated.
 
 The second correction was methodological. A CPD detector alone is not enough:
 we need to test whether CPD improves actual portfolio PnL. This is why the
