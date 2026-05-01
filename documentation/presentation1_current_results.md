@@ -1,9 +1,25 @@
-# Presentation 1 - Current Results Snapshot
+# Presentation 1 - Progress And Current Results Snapshot
 
 This note freezes the current state of the project before adding a heavier
 LSTM/Sharpe-loss model. It is meant to support the first monthly presentation:
 what is already implemented, what the current results say, and what remains to
-be improved.
+be improved. It also keeps a trace of the main corrections and decisions made
+along the way.
+
+## 0. Progress Log
+
+| Step | What changed | Why it mattered | Current status |
+|---|---|---|---|
+| Git branch | Work moved and pushed on `justine/submission`. | Vincent explicitly asked everyone to work on a Git branch. | Done. |
+| Data source | `01_build_dataset.py` now starts in 2006 and uses yearly CSV files by default, then appends the PRICE ATLAS Excel tail for 2025-2026. | The Excel workbook alone starts in 2013, while Vincent asked for a 2006-to-today backtest. | Done. |
+| Long-format panel | Built `stoxx600_processed.csv` with price, returns, volatility, metadata and relative returns. | This matches the requested format: `date`, `ticker`, `price`, features. | Done. |
+| Idiosyncratic returns | Added market-relative and sector-relative returns. | Vincent highlighted idiosyncratic shocks as the useful detection target, not only macro shocks. | Done, can be improved with earnings dates later. |
+| CPD layer | Implemented fast CPD scores and GP-style reference logic. | The paper's key contribution is the CPD signal; the fast layer makes experiments scalable. | Done, but full 2006-2026 CPD refresh should be checked. |
+| Backtest | Added a first rule-based backtest in `04_run_backtest.py`. | This created the evaluation layer needed to compare all future models. | Done. |
+| DMN-lite | Added a ridge-based supervised allocation model in `03_train_dmn.py`. | It closes the full pipeline before moving to the heavier LSTM. | Done, preliminary baseline. |
+| Walk-forward | DMN-lite uses expanding annual walk-forward folds. | Vincent emphasized walk-forward validation; this avoids random temporal leakage. | Done, validation split still to improve. |
+| Notebooks | Added notebooks `03` and `04`; converted main visuals to Plotly. | The presentation needs clear, reproducible outputs and graphs. | Done. |
+| Current snapshot | This file freezes results, limitations and next steps. | It keeps a clean trace for the report and PowerPoint. | Done. |
 
 ## 1. Scope Implemented So Far
 
@@ -49,6 +65,31 @@ The current results are encouraging but preliminary.
 - The rule-based CPD-adjusted strategy is close to slow momentum, but does not yet produce a strong improvement.
 - This suggests that CPD information is useful as a model feature, but the simple hand-built CPD allocation rule is probably too crude.
 - The next important question is whether the paper-style LSTM/DMN can extract more value from the same CPD and momentum features.
+
+## 3.1 How The Work Evolved
+
+The project started from the paper structure: slow momentum, fast reversion,
+CPD, then a DMN-style allocation model. The first implementation effort focused
+on making the data reliable and reproducible before optimizing the model.
+
+The main correction was the data source. Initially, the Excel workbook looked
+like the natural source, but it only starts in 2013. Because Vincent asked for a
+2006-to-today backtest, the pipeline was corrected to use yearly CSV files for
+2006-2024 and the Excel workbook only for the 2025-2026 tail.
+
+The second correction was methodological. A CPD detector alone is not enough:
+we need to test whether CPD improves actual portfolio PnL. This is why the
+backtest layer was implemented before the final LSTM. It gives us a stable
+evaluation framework.
+
+The third correction was validation. Instead of random train/test splits, the
+current supervised model uses yearly walk-forward folds. This is closer to how
+the strategy would be evaluated in practice and matches Vincent's comments.
+
+The current DMN-lite model should therefore be understood as a bridge: it is
+not the final paper-style LSTM, but it proves that the pipeline can transform
+daily data and CPD features into out-of-sample positions and measurable
+backtest results.
 
 ## 4. Walk-Forward Status
 
