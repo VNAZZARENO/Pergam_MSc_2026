@@ -6,6 +6,7 @@
 # scipy
 # matplotlib
 plotly>=5.0
+torch>=2.0
 # scikit-learn
 # gpflow
 # tensorflow

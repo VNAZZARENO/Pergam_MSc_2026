@@ -1,10 +1,13 @@
 """Model helpers for the Deep Momentum Network step.
 
-The paper uses an LSTM trained with a Sharpe-ratio objective. For the first
-working implementation we provide a lightweight, dependency-free approximation:
-a ridge model that maps momentum, volatility and CPD features to bounded
-positions. This gives the project a complete train -> positions -> backtest
-pipeline before the heavier LSTM is added.
+The project keeps two model layers:
+
+* ``RidgePositionModel`` is the lightweight DMN-lite baseline.
+* ``DeepMomentumNetwork`` is the PyTorch LSTM used for the paper-style
+  Sharpe-loss experiment.
+
+Both models return bounded stock positions in [-1, 1], so they can be evaluated
+by the same backtest code.
 """
 
 from __future__ import annotations
@@ -17,6 +20,23 @@ sys.modules.setdefault("numexpr", None)
 sys.modules.setdefault("bottleneck", None)
 
 import pandas as pd
+
+
+def _require_torch():
+    """Import PyTorch only for the LSTM path.
+
+    Keeping this lazy avoids loading PyTorch when the ridge baseline is used,
+    which prevents OpenMP runtime conflicts on some Windows/Anaconda setups.
+    """
+    try:
+        import torch
+        from torch import nn
+    except ImportError as exc:  # pragma: no cover - depends on environment.
+        raise ImportError(
+            "PyTorch is required for the LSTM DMN. Install torch in the active "
+            "environment first."
+        ) from exc
+    return torch, nn
 
 
 class RidgePositionModel:
@@ -74,13 +94,46 @@ class RidgePositionModel:
 
 
 class DeepMomentumNetwork:
-    """Placeholder API for the future LSTM-based DMN implementation."""
+    """LSTM allocation model inspired by the paper's DMN block.
 
-    def __init__(self, *args, **kwargs):
-        raise NotImplementedError(
-            "The full LSTM DMN is a next step. Use RidgePositionModel for the "
-            "current working implementation."
-        )
+    The network consumes a rolling sequence of stock-level features and outputs
+    one bounded position for the next trading day.
+    """
+
+    def __new__(cls, *args, **kwargs):
+        torch, nn = _require_torch()
+
+        class _DeepMomentumNetworkImpl(nn.Module):
+            def __init__(
+                self,
+                n_features,
+                hidden_size=32,
+                num_layers=1,
+                dropout=0.0,
+                max_position=1.0,
+            ):
+                super().__init__()
+                self.max_position = float(max_position)
+                lstm_dropout = float(dropout) if int(num_layers) > 1 else 0.0
+                self.lstm = nn.LSTM(
+                    input_size=int(n_features),
+                    hidden_size=int(hidden_size),
+                    num_layers=int(num_layers),
+                    dropout=lstm_dropout,
+                    batch_first=True,
+                )
+                self.head = nn.Sequential(
+                    nn.LayerNorm(int(hidden_size)),
+                    nn.Linear(int(hidden_size), 1),
+                    nn.Tanh(),
+                )
+
+            def forward(self, x):
+                output, _ = self.lstm(x)
+                last_hidden = output[:, -1, :]
+                return self.max_position * self.head(last_hidden).squeeze(-1)
+
+        return _DeepMomentumNetworkImpl(*args, **kwargs)
 
 
 def sharpe_loss(positions, returns, eps=1e-8):
@@ -92,3 +145,20 @@ def sharpe_loss(positions, returns, eps=1e-8):
     if len(pnl) == 0:
         return 0.0
     return -float(np.sqrt(252.0) * pnl.mean() / (pnl.std() + eps))
+
+
+def torch_sharpe_loss(positions, returns, eps=1e-6):
+    """Differentiable negative annualized Sharpe ratio for PyTorch training."""
+    torch, _ = _require_torch()
+    pnl = positions * returns
+    mean = pnl.mean()
+    std = pnl.std(unbiased=False).clamp_min(eps)
+    return -torch.sqrt(torch.tensor(252.0, device=pnl.device)) * mean / std
+
+
+def set_torch_seed(seed=42):
+    """Set deterministic seeds for reproducible CPU experiments."""
+    torch, _ = _require_torch()
+    torch.manual_seed(int(seed))
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(int(seed))

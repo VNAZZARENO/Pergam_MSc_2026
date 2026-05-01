@@ -67,13 +67,67 @@ def _resolve(path):
 
 def load_panel(data_dir, panel_file, max_tickers=None):
     """Load the feature panel used by the DMN-lite model."""
-    usecols = ["date", "ticker", RETURN_COL] + BASE_FEATURE_COLS
+    path = data_dir / panel_file
+    available_cols = set(pd.read_csv(path, nrows=0).columns)
+    candidate_cols = [
+        "date",
+        "ticker",
+        "price",
+        RETURN_COL,
+        "20d_arith_ret",
+        "21d_arith_ret",
+        "63d_arith_ret",
+        "126d_arith_ret",
+        "252d_arith_ret",
+        "20d_vol",
+        "60d_vol",
+        "252d_vol",
+        "1d_ret_vs_ew_lag1",
+        "1d_ret_vs_sector_lag1",
+    ]
+    usecols = [col for col in candidate_cols if col in available_cols]
     panel = pd.read_csv(data_dir / panel_file, usecols=usecols, parse_dates=["date"])
     panel = panel.dropna(subset=["ticker"]).sort_values(["ticker", "date"])
     if max_tickers is not None:
         tickers = list(dict.fromkeys(panel["ticker"].astype(str)))[:max_tickers]
         panel = panel.loc[panel["ticker"].isin(tickers)]
+    panel = ensure_feature_columns(panel)
     return panel
+
+
+def ensure_feature_columns(panel):
+    """Create missing momentum/volatility features from the price panel."""
+    out = panel.sort_values(["ticker", "date"]).copy()
+    grouped = out.groupby("ticker", sort=False)
+
+    if "price" in out.columns:
+        for window in [21, 63, 126, 252]:
+            col = f"{window}d_arith_ret"
+            if col not in out.columns:
+                out[col] = grouped["price"].pct_change(window)
+        if RETURN_COL not in out.columns:
+            out[RETURN_COL] = grouped["price"].pct_change()
+
+    if "21d_arith_ret" not in out.columns and "20d_arith_ret" in out.columns:
+        out["21d_arith_ret"] = out["20d_arith_ret"]
+
+    if RETURN_COL in out.columns:
+        returns = pd.to_numeric(out[RETURN_COL], errors="coerce")
+        for window in [20, 60, 252]:
+            col = f"{window}d_vol"
+            if col not in out.columns:
+                out[col] = (
+                    returns.groupby(out["ticker"], sort=False)
+                    .rolling(window, min_periods=max(5, window // 4))
+                    .std()
+                    .reset_index(level=0, drop=True)
+                    * np.sqrt(252.0)
+                )
+
+    for col in BASE_FEATURE_COLS:
+        if col not in out.columns:
+            out[col] = 0.0
+    return out
 
 
 def load_cpd_scores(data_dir, cpd_file):

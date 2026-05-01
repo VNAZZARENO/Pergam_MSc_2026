@@ -18,6 +18,7 @@ along the way.
 | Backtest | Added a first rule-based backtest in `04_run_backtest.py`. | This created the evaluation layer needed to compare all future models. | Done. |
 | DMN-lite | Added a ridge-based supervised allocation model in `03_train_dmn.py`. | It closes the full pipeline before moving to the heavier LSTM. | Done, preliminary baseline. |
 | Walk-forward | DMN-lite uses expanding annual walk-forward folds. | Vincent emphasized walk-forward validation; this avoids random temporal leakage. | Done, validation split still to improve. |
+| LSTM DMN | Added `03_train_lstm_dmn.py` with a PyTorch LSTM and differentiable Sharpe loss. | This is the first implementation step that moves the model closer to the paper. | Smoke-tested, full run pending. |
 | Notebooks | Added notebooks `03` and `04`; converted main visuals to Plotly. | The presentation needs clear, reproducible outputs and graphs. | Done. |
 | Current snapshot | This file freezes results, limitations and next steps. | It keeps a clean trace for the report and PowerPoint. | Done. |
 
@@ -41,7 +42,14 @@ The current pipeline covers the full research chain:
    - Features: momentum, volatility, market/sector relative returns, CPD score.
    - Output: stock-level positions in `dmn_lite_positions.csv`.
 
-4. `04_run_backtest.ipynb` / `scripts/04_run_backtest.py`
+4. `scripts/03_train_lstm_dmn.py`
+   - First PyTorch LSTM implementation closer to the paper.
+   - Rolling stock-level feature sequences.
+   - Differentiable negative Sharpe-ratio loss.
+   - Same annual expanding walk-forward structure.
+   - Output: stock-level positions in `dmn_lstm_positions.csv` after a full run.
+
+5. `04_run_backtest.ipynb` / `scripts/04_run_backtest.py`
    - Backtest of rule-based baselines and DMN-lite positions.
    - Metrics: annual return, annual volatility, Sharpe, Sortino, Calmar, max drawdown, hit ratio, average assets, turnover.
 
@@ -91,6 +99,12 @@ not the final paper-style LSTM, but it proves that the pipeline can transform
 daily data and CPD features into out-of-sample positions and measurable
 backtest results.
 
+The first LSTM/Sharpe-loss implementation has now been added as a separate
+script, not as a replacement for DMN-lite. This keeps the baseline comparable
+while allowing the project to move toward the paper's architecture. The next
+step is to run the LSTM on the full intended universe/date range, then backtest
+`dmn_lstm_positions.csv` next to the existing strategies.
+
 ## 4. Walk-Forward Status
 
 The current DMN-lite model already uses an expanding walk-forward protocol:
@@ -121,12 +135,12 @@ hyperparameter selection and early stopping.
 
 ## 6. Next Technical Step
 
-The next step should be a closer implementation of the paper:
+The next step is to turn the new LSTM script into a full result:
 
-1. LSTM DMN without CPD.
-2. LSTM DMN with CPD.
-3. Negative Sharpe-ratio loss.
-4. Same walk-forward protocol.
+1. Confirm that `stoxx600_processed.csv` really covers 2006-01-02 to 2026-04-10.
+2. Run `03_train_lstm_dmn.py` on the full universe.
+3. Backtest `dmn_lstm_positions.csv`.
+4. Run an ablation without CPD using `--no-cpd`.
 5. Compare:
    - slow momentum;
    - CPD-adjusted rule-based;

@@ -28,6 +28,7 @@ PANEL_COLUMNS = [
     "date",
     "ticker",
     "1d_arith_ret",
+    "20d_arith_ret",
     "21d_arith_ret",
     "252d_arith_ret",
 ]
@@ -69,8 +70,12 @@ def _resolve(path):
 def load_panel(data_dir, panel_file, max_tickers=None):
     """Load only the columns needed by the backtest."""
     path = data_dir / panel_file
-    panel = pd.read_csv(path, usecols=PANEL_COLUMNS, parse_dates=["date"])
+    available_cols = set(pd.read_csv(path, nrows=0).columns)
+    usecols = [col for col in PANEL_COLUMNS if col in available_cols]
+    panel = pd.read_csv(path, usecols=usecols, parse_dates=["date"])
     panel = panel.dropna(subset=["ticker"])
+    if "21d_arith_ret" not in panel.columns and "20d_arith_ret" in panel.columns:
+        panel["21d_arith_ret"] = panel["20d_arith_ret"]
     if max_tickers is not None:
         tickers = list(dict.fromkeys(panel["ticker"].astype(str)))[:max_tickers]
         panel = panel.loc[panel["ticker"].isin(tickers)]
