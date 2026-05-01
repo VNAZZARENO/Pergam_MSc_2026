@@ -169,6 +169,279 @@ The model observes features available at date `t`, predicts a position for date
 `t+1`, and the backtest evaluates that position on the realized return at
 `t+1`. This keeps the timing of information, prediction and PnL consistent.
 
+## 3.3 Notes De Compréhension - Partie 01
+
+Cette section résume les points importants du notebook `01_data_loading.ipynb`.
+Elle sert de mémo de compréhension pour préparer la présentation.
+
+### Notebook 01 vs script de production
+
+Le notebook 01 sert surtout à expliquer et vérifier les définitions de données.
+Il lit le fichier Excel `2025_2026_PRICE_ATLAS_data_sxxr_static.xlsx`, qui est
+facile à inspecter mais commence en 2013. C'est pour cela que le notebook peut
+afficher une période 2013-2026.
+
+Le dataset final utilisé par les notebooks 02-04 est généré par
+`scripts/01_build_dataset.py`. Ce script lit les CSV annuels
+`prices_2006.csv` à `prices_2024.csv`, puis ajoute la fin 2025-2026 depuis
+l'Excel. Le fichier de production `stoxx600_processed.csv` couvre donc bien
+2006-01-02 à 2026-04-10.
+
+Le notebook 01 ne doit pas écraser les fichiers de production. Les fichiers
+principaux dans `data/processed/stoxx600/` sont générés par le script.
+
+### Fichiers `src` liés à la partie 01
+
+Les fonctions réutilisables sont dans `src/`, tandis que le script assemble ces
+fonctions pour construire le pipeline complet.
+
+- `src/data_loader.py`
+  - `load_stoxx600_prices()` : lit les CSV annuels de prix.
+  - `load_price_atlas_prices()` : lit les prix depuis l'Excel PRICE ATLAS.
+  - `append_price_atlas_tail()` : ajoute les dates 2025-2026 de l'Excel après
+    l'historique CSV.
+  - `clean_prices()` : retire les prix aberrants et bouche seulement les petits
+    trous.
+  - `prices_to_panel()` : transforme les prix du format large vers le format
+    long `date`, `ticker`, `price`.
+  - `add_geography()` : ajoute `exchange`, `country` et `region` à partir du
+    suffixe Bloomberg du ticker.
+
+- `src/preprocessing.py`
+  - `arithmetic_returns()` : calcule les rendements simples utilisés pour le
+    PnL et le backtest.
+  - `log_returns()` : calcule les log-rendements, pratiques pour les calculs
+    statistiques et la volatilité.
+  - `rolling_vol()` : calcule la volatilité réalisée sur une fenêtre glissante.
+
+- `src/features.py`
+  - `equal_weight_return()` : calcule le rendement moyen équipondéré de
+    l'univers disponible.
+  - `add_relative_returns()` : ajoute les rendements relatifs au marché, à la
+    géographie et au secteur.
+  - `normalized_returns()` et `macd()` : construisent des features de momentum
+    supplémentaires pour les expériences de modèle.
+
+- `src/sector_mapping.py`
+  - `SECTOR_MAP` : mapping statique `ticker -> secteur`.
+  - Ce mapping ne vient pas des prix. Les prix ne permettent pas de savoir
+    qu'ASML est en Information Technology ou que BNP est en Financials. Il
+    s'agit d'une classification sectorielle externe encodée dans le projet pour
+    une première implémentation.
+
+### SXXR et Equal-Weight
+
+`SXXR` est le benchmark officiel STOXX Europe 600, plutôt pondéré par les
+capitalisations. Les grandes valeurs ont donc plus de poids dans son mouvement.
+
+`EW` signifie equal-weight. C'est un indice construit dans le projet en donnant
+le même poids à chaque action disponible. Il représente davantage le mouvement
+du stock européen moyen.
+
+Les deux références sont utiles :
+
+- `SXXR` sert de benchmark officiel de marché.
+- `EW` sert de référence interne moins dominée par les grandes capitalisations.
+- Pour isoler les chocs spécifiques aux stocks, `EW` et surtout les rendements
+  relatifs au secteur sont souvent plus informatifs que le benchmark officiel
+  seul.
+
+Dans le tableau benchmark du notebook, `EW` commence à 100 parce que nous le
+construisons comme un indice base 100. `SXXR` garde son niveau de prix réel dans
+la source. Dans les graphes, les séries sont rebased à 100 pour comparer leurs
+trajectoires.
+
+### Tickers, exchanges, countries et regions
+
+Un ticker Bloomberg contient souvent deux parties, par exemple `ASML NA` :
+
+- `ASML` : code de la société.
+- `NA` : suffixe de place de cotation.
+
+La place de cotation est le marché sur lequel l'action est cotée. Exemples :
+
+- `FP` : France / Paris.
+- `GY` : Allemagne / Xetra.
+- `LN` : Londres.
+- `IM` : Italie.
+- `NA` : Pays-Bas / Amsterdam.
+- `SS` : Suède / Stockholm.
+- `BB` : Belgique.
+
+Le suffixe est utile car un même symbole peut être ambigu ou exister sur
+plusieurs marchés. Le ticker complet `ticker + exchange` identifie donc plus
+clairement l'actif.
+
+`exchange`, `country` et `region` sont trois niveaux de granularité :
+
+- `exchange` : place de cotation, niveau le plus précis.
+- `country` : pays associé à la cotation.
+- `region` : regroupement géographique plus large, par exemple Western Europe,
+  Nordic, Southern Europe ou UK & Ireland.
+
+Ces variables ne sont pas le coeur du projet, mais elles permettent de contrôler
+des mouvements géographiques. Elles aident à distinguer un choc propre au stock
+d'un choc de marché local, national ou régional.
+
+### Rendements arithmétiques, log-rendements et horizons
+
+Les rendements ne sont pas donnés directement dans les fichiers raw. Ils sont
+calculés à partir des prix.
+
+Le rendement arithmétique est :
+
+```text
+price_today / price_yesterday - 1
+```
+
+Il est intuitif et sert au PnL et au backtest.
+
+Le log-rendement est :
+
+```text
+log(price_today) - log(price_yesterday)
+```
+
+Il est utile pour les calculs statistiques car il s'additionne mieux dans le
+temps.
+
+Les horizons mesurent des mouvements passés à différentes fréquences :
+
+- `1d` : rendement journalier.
+- `21d` : environ un mois de bourse.
+- `63d` : environ trois mois.
+- `126d` : environ six mois.
+- `252d` : environ un an.
+
+Plusieurs horizons sont utiles parce que le papier combine slow momentum et
+fast reversion. Les horizons longs capturent la tendance lente. Les horizons
+courts capturent les chocs récents et les effets de retour rapide.
+
+### Volatilité
+
+La volatilité est aussi calculée à partir des rendements passés. Par exemple,
+`60d_vol` est l'écart-type annualisé des rendements quotidiens sur environ 60
+jours de bourse.
+
+On utilise `20d_vol`, `60d_vol` et `252d_vol` :
+
+- 20 jours : volatilité courte, environ un mois.
+- 60 jours : volatilité intermédiaire, environ trois mois.
+- 252 jours : volatilité longue, environ un an.
+
+On ne calcule pas vraiment une volatilité `1d`, car une volatilité estimée sur
+un seul jour n'a pas de sens statistique. Il faut une fenêtre d'observations.
+
+### Rendements relatifs et chocs idiosyncratiques
+
+Un rendement relatif est défini comme :
+
+```text
+rendement du stock - rendement du groupe de référence
+```
+
+Exemple :
+
+```text
+ASML = +1%
+secteur Tech = -2%
+1d_ret_vs_sector = +1% - (-2%) = +3%
+```
+
+ASML a donc fait 3 points de pourcentage mieux que son secteur.
+
+Les rendements relatifs calculés sont :
+
+- `1d_ret_vs_sxxr` : stock moins benchmark SXXR.
+- `1d_ret_vs_ew` : stock moins marché equal-weight.
+- `1d_ret_vs_exchange` : stock moins les actions de la même place de cotation.
+- `1d_ret_vs_country` : stock moins les actions du même pays.
+- `1d_ret_vs_region` : stock moins les actions de la même région.
+- `1d_ret_vs_sector` : stock moins les actions du même secteur.
+
+Ces variables servent à isoler les chocs idiosyncratiques, c'est-à-dire les
+mouvements propres au stock qui ne s'expliquent pas seulement par le marché, le
+pays, la région ou le secteur. Pour Vincent, la variable la plus importante à
+défendre est probablement `1d_ret_vs_sector`, car elle retire le mouvement
+commun du secteur.
+
+### Sector mapping et sector coverage
+
+Les prix ne contiennent pas le secteur des entreprises. Le projet ajoute donc
+un mapping statique dans `src/sector_mapping.py` :
+
+```text
+ticker -> secteur GICS
+```
+
+Cela permet de construire :
+
+- `sector_1d_ret` : rendement moyen du secteur à une date donnée.
+- `1d_ret_vs_sector` : rendement du stock moins rendement moyen de son secteur.
+- `sector_returns.csv` : séries sectorielles utilisées ensuite par le notebook
+  02 pour la détection de changepoints au niveau secteur.
+
+`sector coverage` mesure la proportion de lignes stock auxquelles on a pu
+attribuer un secteur. Par exemple, 97.51% signifie qu'environ 97.51% des lignes
+ont un secteur disponible. C'est suffisant pour utiliser les variables
+sectorielles dans une première version, mais le mapping devra idéalement être
+validé contre Bloomberg ou une source officielle.
+
+### Sector-relative returns vs sector-level indices
+
+`1d_ret_vs_sector` est une variable stock-level : elle indique si un stock a
+surperformé ou sous-performé son secteur.
+
+`sector_returns.csv` est une table sector-level : elle donne le rendement moyen
+de chaque secteur dans le temps.
+
+Les deux sont utiles :
+
+- le stock-vs-sector sert à détecter les mouvements spécifiques à une action ;
+- les séries sectorielles servent à identifier les mouvements communs au
+  secteur entier.
+
+Cela permet ensuite de distinguer un choc sectoriel d'un choc vraiment propre
+au stock.
+
+### Lag et lookahead bias
+
+Les colonnes qui se terminent par `_lag1` sont décalées d'un jour par ticker :
+
+```python
+df.groupby("ticker")[col].shift(1)
+```
+
+La valeur observée lundi devient donc une information utilisable mardi. C'est
+important pour éviter le lookahead bias. Le modèle ne doit jamais utiliser une
+information du jour `t` si cette information n'aurait été connue qu'à la fin du
+jour `t`.
+
+La logique correcte est :
+
+```text
+features disponibles à t -> position pour t+1 -> PnL réalisé à t+1
+```
+
+### Sanity checks
+
+Un sanity check est une vérification de cohérence simple. Ce n'est pas une
+preuve statistique, mais cela permet de détecter rapidement une erreur de
+pipeline.
+
+Le sanity check COVID sur ASML compare par exemple :
+
+- le rendement brut du stock ;
+- le rendement du marché SXXR ;
+- le rendement equal-weight ;
+- le rendement du secteur ;
+- les rendements relatifs.
+
+Si ASML monte alors que le marché et son secteur baissent fortement, le
+rendement relatif devient fortement positif. Cela illustre l'objectif du
+pipeline : séparer ce qui est dû au marché ou au secteur de ce qui est propre au
+stock.
+
 The second correction was methodological. A CPD detector alone is not enough:
 we need to test whether CPD improves actual portfolio PnL. This is why the
 backtest layer was implemented before the final LSTM. It gives us a stable
