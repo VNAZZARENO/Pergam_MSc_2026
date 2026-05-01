@@ -107,6 +107,56 @@ Latest rebuild check:
 - The raw annual CSV files remain unchanged; only processed outputs are
   regenerated.
 
+## 3.2 Basic Feature Definitions
+
+The main processed file is `stoxx600_processed.csv`. It is a long-format panel:
+one row corresponds to one stock on one date. The important columns are not raw
+Bloomberg fields; most of them are features computed from the raw prices.
+
+The return columns measure past price performance over different horizons:
+
+- `1d_arith_ret`: one-day return, computed from yesterday's price to today's
+  price.
+- `21d_arith_ret`: approximately one trading month.
+- `63d_arith_ret`: approximately one trading quarter.
+- `126d_arith_ret`: approximately six trading months.
+- `252d_arith_ret`: approximately one trading year.
+
+Using several horizons matters because the paper's economic idea combines slow
+momentum and fast reversion. Long horizons, such as 126d or 252d, capture slow
+trend information. Short horizons, such as 1d or 21d, capture recent shocks or
+short-term reversal information.
+
+The volatility columns, such as `20d_vol`, `60d_vol` and `252d_vol`, are also
+computed from historical returns. For example, `60d_vol` is the annualized
+standard deviation of the stock's recent daily returns over roughly 60 trading
+days. These variables help the model distinguish a normal move from a large
+move relative to the stock's own risk.
+
+The relative-return columns compare each stock to a benchmark or group on the
+same day:
+
+- `1d_ret_vs_ew`: stock return minus the equal-weight STOXX 600 return.
+- `1d_ret_vs_sxxr`: stock return minus the SXXR benchmark return.
+- `1d_ret_vs_sector`: stock return minus its sector return.
+- `1d_ret_vs_country` and `1d_ret_vs_region`: stock return minus its local
+  group return.
+
+These columns are useful for idiosyncratic shocks. A stock may fall because the
+whole market falls, or because something specific happened to that stock. The
+relative-return variables help separate stock-specific moves from macro or
+sector-wide moves.
+
+Columns ending in `_lag1` are shifted by one trading day. This means the model
+uses yesterday's observed information to make today's decision. This is
+important to avoid lookahead bias: the strategy must not use information from a
+date before that information would have been observable in real time.
+
+For supervised training, the scripts also create next-day targets internally.
+The model observes features available at date `t`, predicts a position for date
+`t+1`, and the backtest evaluates that position on the realized return at
+`t+1`. This keeps the timing of information, prediction and PnL consistent.
+
 The second correction was methodological. A CPD detector alone is not enough:
 we need to test whether CPD improves actual portfolio PnL. This is why the
 backtest layer was implemented before the final LSTM. It gives us a stable
