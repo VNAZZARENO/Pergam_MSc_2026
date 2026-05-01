@@ -14,11 +14,11 @@ along the way.
 | Data source | `01_build_dataset.py` now starts in 2006 and uses yearly CSV files by default, then appends the PRICE ATLAS Excel tail for 2025-2026. | The Excel workbook alone starts in 2013, while Vincent asked for a 2006-to-today backtest. | Done and rebuilt. |
 | Long-format panel | Built `stoxx600_processed.csv` with price, returns, volatility, metadata and relative returns. | This matches the requested format: `date`, `ticker`, `price`, features. | Done. |
 | Idiosyncratic returns | Added market-relative and sector-relative returns. | Vincent highlighted idiosyncratic shocks as the useful detection target, not only macro shocks. | Done, can be improved with earnings dates later. |
-| CPD layer | Implemented fast CPD scores and GP-style reference logic. | The paper's key contribution is the CPD signal; the fast layer makes experiments scalable. | Done, but full 2006-2026 CPD refresh should be checked. |
+| CPD layer | Implemented fast CPD scores and GP-style reference logic. | The paper's key contribution is the CPD signal; the fast layer makes experiments scalable. | Full 2006-2026 stock-vs-sector refresh done. |
 | Backtest | Added a first rule-based backtest in `04_run_backtest.py`. | This created the evaluation layer needed to compare all future models. | Done. |
 | DMN-lite | Added a ridge-based supervised allocation model in `03_train_dmn.py`. | It closes the full pipeline before moving to the heavier LSTM. | Done, preliminary baseline. |
 | Walk-forward | DMN-lite uses expanding annual walk-forward folds. | Vincent emphasized walk-forward validation; this avoids random temporal leakage. | Done, validation split still to improve. |
-| LSTM DMN | Added `03_train_lstm_dmn.py` with a PyTorch LSTM and differentiable Sharpe loss. | This is the first implementation step that moves the model closer to the paper. | Smoke-tested, full run pending. |
+| LSTM DMN | Added `03_train_lstm_dmn.py` with a PyTorch LSTM and differentiable Sharpe loss. | This is the first implementation step that moves the model closer to the paper. | First full CPU run done. |
 | Notebooks | Added notebooks `03` and `04`; converted main visuals to Plotly. | The presentation needs clear, reproducible outputs and graphs. | Done. |
 | Current snapshot | This file freezes results, limitations and next steps. | It keeps a clean trace for the report and PowerPoint. | Done. |
 
@@ -35,6 +35,8 @@ The current pipeline covers the full research chain:
 2. `02_changepoint_detection.ipynb` / `scripts/02_compute_cpd.py`
    - CPD methods: CUSUM, jump score, rolling t-test, BOCPD option, GP-style CPD reference.
    - CPD scores on raw stock returns, market-relative returns, sector-relative returns and sector-level series.
+   - Latest full refresh: stock-vs-sector CPD scores for all 828 tickers, plus sector-level series.
+   - Output: 1,762,741 CPD rows and 10,197 detected changepoints.
 
 3. `03_train_dmn.ipynb` / `scripts/03_train_dmn.py`
    - First supervised model layer: `DMN-lite`.
@@ -47,7 +49,8 @@ The current pipeline covers the full research chain:
    - Rolling stock-level feature sequences.
    - Differentiable negative Sharpe-ratio loss.
    - Same annual expanding walk-forward structure.
-   - Output: stock-level positions in `dmn_lstm_positions.csv` after a full run.
+   - Output: stock-level positions in `dmn_lstm_positions.csv`.
+   - Ablation output without CPD: `dmn_lstm_no_cpd_positions.csv`.
 
 5. `04_run_backtest.ipynb` / `scripts/04_run_backtest.py`
    - Backtest of rule-based baselines and DMN-lite positions.
@@ -55,13 +58,15 @@ The current pipeline covers the full research chain:
 
 ## 2. Current Backtest Results
 
-Source file: `data/processed/stoxx600/backtest_summary_with_dmn.csv`
+Source file: `data/processed/stoxx600/backtest_summary_final_comparison.csv`
 
 | Strategy | Period | Ann. Return | Ann. Vol | Sharpe | Sortino | Calmar | Max Drawdown | Hit Ratio | Avg Assets | Avg Turnover |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| DMN-lite | 2010-01-04 to 2026-04-10 | 3.08% | 7.69% | 0.43 | 0.54 | 0.15 | -20.52% | 53.27% | 317.89 | 3.36% |
+| DMN-lite | 2010-01-04 to 2026-04-10 | 2.79% | 7.45% | 0.41 | 0.51 | 0.14 | -19.31% | 52.48% | 317.89 | 3.59% |
 | Slow momentum | 2006-12-21 to 2026-04-10 | 3.75% | 14.73% | 0.32 | 0.42 | 0.11 | -34.29% | 53.00% | 251.34 | 4.19% |
-| CPD-adjusted | 2006-12-21 to 2026-04-10 | 3.69% | 14.64% | 0.32 | 0.41 | 0.11 | -33.86% | 52.96% | 251.29 | 4.25% |
+| LSTM DMN without CPD | 2010-01-04 to 2026-04-10 | 2.69% | 13.59% | 0.26 | 0.31 | 0.09 | -30.85% | 53.53% | 312.03 | 9.71% |
+| CPD-adjusted | 2006-12-21 to 2026-04-10 | 2.61% | 13.24% | 0.26 | 0.33 | 0.08 | -31.35% | 53.34% | 251.29 | 5.97% |
+| LSTM DMN with CPD | 2010-01-04 to 2026-04-10 | 2.03% | 13.57% | 0.22 | 0.27 | 0.07 | -29.26% | 52.75% | 312.03 | 8.47% |
 | Slow + fast | 2006-12-21 to 2026-04-10 | 1.68% | 12.91% | 0.19 | 0.24 | 0.05 | -33.68% | 53.30% | 251.29 | 4.53% |
 
 ## 3. Main Interpretation
@@ -70,9 +75,16 @@ The current results are encouraging but preliminary.
 
 - DMN-lite has the highest Sharpe ratio in the current comparison.
 - DMN-lite also has the smallest max drawdown.
-- The rule-based CPD-adjusted strategy is close to slow momentum, but does not yet produce a strong improvement.
-- This suggests that CPD information is useful as a model feature, but the simple hand-built CPD allocation rule is probably too crude.
-- The next important question is whether the paper-style LSTM/DMN can extract more value from the same CPD and momentum features.
+- The rule-based CPD-adjusted strategy reduces drawdown versus slow momentum,
+  but also lowers annual return and Sharpe.
+- The first LSTM/Sharpe-loss implementation is working end-to-end, but it is
+  not yet better than the simpler DMN-lite baseline.
+- In this first run, the LSTM without CPD performs better than the LSTM with
+  CPD. This does not prove CPD is useless; it suggests the CPD feature and LSTM
+  regularization need more tuning before claiming an improvement.
+- The most defensible presentation message is therefore: the full pipeline is
+  reproducible, walk-forward, and now includes a paper-style LSTM baseline, but
+  the strongest current empirical result is still the simpler DMN-lite model.
 
 ## 3.1 How The Work Evolved
 
@@ -177,6 +189,12 @@ while allowing the project to move toward the paper's architecture. The next
 step is to run the LSTM on the full intended universe/date range, then backtest
 `dmn_lstm_positions.csv` next to the existing strategies.
 
+The first full CPU LSTM experiment has now been run with annual expanding
+walk-forward folds from 2010 to 2026. It uses a 63-day input sequence, two
+training epochs per fold, and a capped random sample of 60,000 training
+sequences per fold to keep the computation feasible on a laptop. This should be
+presented as a first working LSTM baseline, not as a fully tuned final network.
+
 ## 4. Walk-Forward Status
 
 The current DMN-lite model already uses an expanding walk-forward protocol:
@@ -209,16 +227,16 @@ hyperparameter selection and early stopping.
 
 The next step is to turn the new LSTM script into a full result:
 
-1. Confirm that `stoxx600_processed.csv` really covers 2006-01-02 to 2026-04-10.
-2. Run `03_train_lstm_dmn.py` on the full universe.
-3. Backtest `dmn_lstm_positions.csv`.
-4. Run an ablation without CPD using `--no-cpd`.
-5. Compare:
-   - slow momentum;
-   - CPD-adjusted rule-based;
-   - DMN-lite;
-   - LSTM without CPD;
-   - LSTM with CPD.
+1. Add a validation split inside each walk-forward fold for hyperparameter
+   selection and early stopping.
+2. Tune LSTM regularization and turnover control, because the first LSTM runs
+   have materially higher turnover than DMN-lite.
+3. Test alternative CPD feature transformations, for example persistence,
+   recent maximum score, or shock sign, instead of using only the raw ensemble
+   score.
+4. Improve the portfolio layer with benchmark-aware or turnover-aware
+   constraints.
+5. Convert the current results into the first PowerPoint narrative.
 
 The key presentation message is:
 
