@@ -11,7 +11,7 @@ along the way.
 | Step | What changed | Why it mattered | Current status |
 |---|---|---|---|
 | Git branch | Work moved and pushed on `justine/submission`. | Vincent explicitly asked everyone to work on a Git branch. | Done. |
-| Data source | `01_build_dataset.py` now starts in 2006 and uses yearly CSV files by default, then appends the PRICE ATLAS Excel tail for 2025-2026. | The Excel workbook alone starts in 2013, while Vincent asked for a 2006-to-today backtest. | Done and rebuilt. |
+| Data source | `01_build_dataset.py` now starts in 2006 and uses yearly CSV files by default, then appends a rescaled PRICE ATLAS Excel tail for 2025-2026. | The Excel workbook alone starts in 2013, while Vincent asked for a 2006-to-today backtest; the rescaling avoids artificial source-switch jumps. | Done and rebuilt. |
 | Long-format panel | Built `stoxx600_processed.csv` with price, returns, volatility, metadata and relative returns. | This matches the requested format: `date`, `ticker`, `price`, features. | Done. |
 | Idiosyncratic returns | Added market-relative and sector-relative returns. | Vincent highlighted idiosyncratic shocks as the useful detection target, not only macro shocks. | Done, can be improved with earnings dates later. |
 | CPD layer | Implemented fast CPD scores and GP-style reference logic. | The paper's key contribution is the CPD signal; the fast layer makes experiments scalable. | Full 2006-2026 stock-vs-sector refresh done. |
@@ -36,7 +36,7 @@ The current pipeline covers the full research chain:
    - CPD methods: CUSUM, jump score, rolling t-test, BOCPD option, GP-style CPD reference.
    - CPD scores on raw stock returns, market-relative returns, sector-relative returns and sector-level series.
    - Latest full refresh: stock-vs-sector CPD scores for all 828 tickers, plus sector-level series.
-   - Output: 1,762,741 CPD rows and 10,197 detected changepoints.
+   - Output: 1,763,349 CPD rows and 10,198 detected changepoints.
 
 3. `03_train_dmn.ipynb` / `scripts/03_train_dmn.py`
    - First supervised model layer: `DMN-lite`.
@@ -62,12 +62,12 @@ Source file: `data/processed/stoxx600/backtest_summary_final_comparison.csv`
 
 | Strategy | Period | Ann. Return | Ann. Vol | Sharpe | Sortino | Calmar | Max Drawdown | Hit Ratio | Avg Assets | Avg Turnover |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| DMN-lite | 2010-01-04 to 2026-04-10 | 2.79% | 7.45% | 0.41 | 0.51 | 0.14 | -19.31% | 52.48% | 317.89 | 3.59% |
-| Slow momentum | 2006-12-21 to 2026-04-10 | 3.75% | 14.73% | 0.32 | 0.42 | 0.11 | -34.29% | 53.00% | 251.34 | 4.19% |
-| LSTM DMN without CPD | 2010-01-04 to 2026-04-10 | 2.69% | 13.59% | 0.26 | 0.31 | 0.09 | -30.85% | 53.53% | 312.03 | 9.71% |
-| CPD-adjusted | 2006-12-21 to 2026-04-10 | 2.61% | 13.24% | 0.26 | 0.33 | 0.08 | -31.35% | 53.34% | 251.29 | 5.97% |
-| LSTM DMN with CPD | 2010-01-04 to 2026-04-10 | 2.03% | 13.57% | 0.22 | 0.27 | 0.07 | -29.26% | 52.75% | 312.03 | 8.47% |
-| Slow + fast | 2006-12-21 to 2026-04-10 | 1.68% | 12.91% | 0.19 | 0.24 | 0.05 | -33.68% | 53.30% | 251.29 | 4.53% |
+| DMN-lite | 2010-01-04 to 2026-04-10 | 2.85% | 7.43% | 0.42 | 0.53 | 0.15 | -19.31% | 52.47% | 317.96 | 3.59% |
+| Slow momentum | 2006-12-21 to 2026-04-10 | 3.97% | 14.74% | 0.34 | 0.44 | 0.12 | -34.29% | 53.05% | 251.41 | 4.19% |
+| LSTM DMN without CPD | 2010-01-04 to 2026-04-10 | 3.35% | 13.39% | 0.31 | 0.38 | 0.11 | -30.85% | 53.50% | 312.10 | 9.60% |
+| CPD-adjusted | 2006-12-21 to 2026-04-10 | 2.78% | 13.25% | 0.27 | 0.34 | 0.09 | -31.35% | 53.41% | 251.36 | 5.97% |
+| LSTM DMN with CPD | 2010-01-04 to 2026-04-10 | 2.43% | 13.56% | 0.25 | 0.31 | 0.08 | -29.26% | 52.97% | 312.10 | 8.40% |
+| Slow + fast | 2006-12-21 to 2026-04-10 | 1.81% | 12.93% | 0.20 | 0.25 | 0.05 | -33.68% | 53.45% | 251.36 | 4.53% |
 
 ## 3. Main Interpretation
 
@@ -92,23 +92,34 @@ The project started from the paper structure: slow momentum, fast reversion,
 CPD, then a DMN-style allocation model. The first implementation effort focused
 on making the data reliable and reproducible before optimizing the model.
 
-The main correction was the data source. Initially, the Excel workbook looked
-like the natural source, but it only starts in 2013. Because Vincent asked for a
-2006-to-today backtest, the pipeline was corrected to use yearly CSV files for
-2006-2024 and the Excel workbook only for the 2025-2026 tail.
+The main correction was the separation between the universe source and the
+historical price source. Vincent asked us to use the static 2025-2026 Excel file
+for the universe, and also said that the backtest can run from 2006 to today.
+The Excel workbook alone starts in 2013, so it cannot be the only source for a
+2006-to-today empirical backtest.
+
+The production pipeline therefore uses the yearly CSV files as the continuous
+historical price source for 2006-2024, then appends the 2025-2026 PRICE ATLAS
+tail. The tail is rescaled ticker by ticker on the latest overlapping date
+before being appended, because the CSV and Excel sources are close in returns
+but not identical in raw price levels. Without this rescaling, the switch of
+source can create artificial one-day returns around the 2024-2025 boundary.
 
 The interpretation is now:
 
 - `prices_2006.csv` to `prices_2024.csv` are raw historical price files. They
   are read-only inputs and must not be modified.
-- `2025_2026_PRICE_ATLAS_data_sxxr_static.xlsx` is used for the 2025-2026 price
-  tail and for the static universe / metadata reference.
+- `2025_2026_PRICE_ATLAS_data_sxxr_static.xlsx` is used for the static universe
+  / metadata reference and for the recent 2025-2026 price tail.
+- The 2025-2026 Excel tail is rebased on the last overlapping CSV date before
+  being joined to the historical CSV archive.
 - All transformations, feature engineering and cleaning outputs are written
   downstream in `data/processed/stoxx600/`.
 
 This is consistent with Vincent's instruction: the static 2025-2026 workbook is
 the universe reference, while the annual CSV files provide the historical price
-depth needed for a 2006-to-today empirical backtest.
+depth needed for a 2006-to-today empirical backtest. It also avoids using one
+price source for CPD/model features and another one for the backtest.
 
 Latest rebuild check:
 
@@ -184,8 +195,20 @@ afficher une période 2013-2026.
 Le dataset final utilisé par les notebooks 02-04 est généré par
 `scripts/01_build_dataset.py`. Ce script lit les CSV annuels
 `prices_2006.csv` à `prices_2024.csv`, puis ajoute la fin 2025-2026 depuis
-l'Excel. Le fichier de production `stoxx600_processed.csv` couvre donc bien
-2006-01-02 à 2026-04-10.
+l'Excel. Avant de raccorder l'Excel, le script recale les niveaux de prix de
+l'Excel sur la dernière date commune avec les CSV. Cela évite qu'un changement
+de source crée un faux rendement extrême au passage 2024-2025.
+
+On ne mélange donc pas les sources de manière arbitraire :
+
+- l'Excel static 2025-2026 sert à définir l'univers demandé par Vincent et à
+  compléter la période récente ;
+- les CSV annuels servent de source historique continue pour les prix ;
+- les features, la CPD, le modèle et le backtest utilisent ensuite le même
+  panel traité.
+
+Le fichier de production `stoxx600_processed.csv` couvre donc bien 2006-01-02 à
+2026-04-10.
 
 Le notebook 01 ne doit pas écraser les fichiers de production. Les fichiers
 principaux dans `data/processed/stoxx600/` sont générés par le script.
@@ -199,7 +222,8 @@ fonctions pour construire le pipeline complet.
   - `load_stoxx600_prices()` : lit les CSV annuels de prix.
   - `load_price_atlas_prices()` : lit les prix depuis l'Excel PRICE ATLAS.
   - `append_price_atlas_tail()` : ajoute les dates 2025-2026 de l'Excel après
-    l'historique CSV.
+    l'historique CSV, en recalant d'abord les niveaux de prix sur la dernière
+    date commune entre CSV et Excel.
   - `clean_prices()` : retire les prix aberrants et bouche seulement les petits
     trous.
   - `prices_to_panel()` : transforme les prix du format large vers le format

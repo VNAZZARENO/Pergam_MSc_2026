@@ -136,15 +136,46 @@ def load_price_atlas_prices(path, start_year=None, end_year=None, sheet_name="pr
 
 
 # [LOAD] append_price_atlas_tail
-# Ajoute au dataset historique les dates plus recentes disponibles dans l'Excel.
+# Ajoute les dates recentes de l'Excel en recalant les niveaux sur l'historique CSV.
 def append_price_atlas_tail(prices, atlas_prices):
-    """Append dates from ``atlas_prices`` that are not already in ``prices``."""
+    """Append the PRICE ATLAS tail after rescaling it to the CSV history.
+
+    The yearly CSV archive is the continuous historical source through 2024,
+    while the PRICE ATLAS workbook provides the recent 2025-2026 tail. Their
+    raw price levels can differ on the overlapping dates, so common tickers are
+    rescaled on the latest shared date before appending. This keeps returns
+    around the source switch from being dominated by an artificial level jump.
+    """
     if prices.empty:
         return atlas_prices.sort_index()
 
     tail = atlas_prices.loc[atlas_prices.index > prices.index.max()]
     if tail.empty:
         return prices.sort_index()
+
+    common_cols = prices.columns.intersection(atlas_prices.columns)
+    if len(common_cols):
+        scale_values = {}
+        for col in common_cols:
+            overlap = pd.DataFrame({
+                "csv": prices[col],
+                "atlas": atlas_prices[col],
+            }).dropna()
+            overlap = overlap.loc[overlap["atlas"] != 0]
+            if overlap.empty:
+                continue
+            anchor = overlap.iloc[-1]
+            scale_values[col] = anchor["csv"] / anchor["atlas"]
+
+        scale = pd.Series(scale_values, dtype="float64").replace(
+            [float("inf"), float("-inf")],
+            pd.NA,
+        ).dropna()
+        tail = tail.copy()
+        tail.loc[:, scale.index] = tail.loc[:, scale.index].multiply(
+            scale,
+            axis=1,
+        )
 
     combined = pd.concat([prices, tail], axis=0, sort=True)
     combined = combined[~combined.index.duplicated(keep="first")]

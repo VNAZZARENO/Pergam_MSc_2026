@@ -13,6 +13,25 @@ extensions.
 
 ---
 
+## Current Project Adaptation
+
+The paper is the methodological reference, but the current ESILV/Pergam
+implementation is adapted from futures to STOXX Europe 600 equities.
+
+- Universe reference: `data/raw/stoxx600/2025_2026_PRICE_ATLAS_data_sxxr_static.xlsx`.
+- Historical price source: yearly CSV files `prices_2006.csv` to
+  `prices_2024.csv`.
+- Recent price tail: the PRICE ATLAS Excel workbook for 2025-2026, rescaled on
+  the latest overlapping CSV date before being appended.
+- Production panel: `data/processed/stoxx600/stoxx600_processed.csv`, in long
+  format with `date`, `ticker`, `price` and engineered features.
+
+This keeps one coherent price panel for CPD, model training and backtesting,
+while still following Vincent's instruction to use the static 2025-2026 file as
+the universe reference.
+
+---
+
 ## Project Context
 
 Time-series momentum (TSMOM) strategies exploit the empirical fact that strong
@@ -125,9 +144,9 @@ Pergam_MSc_2026/
     └── 00_exploration.ipynb
 ```
 
-All `src/` modules and `scripts/` are currently placeholders; concrete
-implementations will land in follow-up tasks, mirroring the pipeline
-described below.
+The main `src/` modules and `scripts/` now contain working implementations for
+the first presentation: data loading, feature construction, CPD scores,
+DMN-style model experiments and backtesting.
 
 ---
 

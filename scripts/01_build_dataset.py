@@ -75,7 +75,8 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["excel", "yearly"],
         default="yearly",
         help="Use annual CSV files from 2006-2024 plus the PRICE ATLAS Excel tail "
-             "for 2025-2026 by default. Use 'excel' to match notebook 01 only.",
+             "for 2025-2026 by default, with the tail rebased on the CSV overlap. "
+             "Use 'excel' to match notebook 01 only.",
     )
     parser.add_argument(
         "--universe-json",
@@ -140,9 +141,10 @@ def load_price_history(raw_dir, excel_path, start_year, end_year, price_source="
     )
 
     if excel_path.exists() and end_year >= 2025:
+        atlas_start_year = min(2024, max(start_year, 2013))
         atlas_prices = load_price_atlas_prices(
             excel_path,
-            start_year=2025,
+            start_year=atlas_start_year,
             end_year=end_year,
         )
         return append_price_atlas_tail(raw_prices, atlas_prices)
