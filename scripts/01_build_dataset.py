@@ -8,6 +8,10 @@ pieces needed for the CPD discussion:
 * group-relative returns for exchange/country/region,
 * optional sector-relative returns when a ticker-sector mapping is available,
 * lagged versions of usable returns to avoid lookahead.
+
+Presentation 1 uses Vincent's requested static 2025-2026 Excel universe as the
+working universe. The yearly CSV files are only used to backfill price history
+before the Excel workbook starts, so we can still test from 2006 to today.
 """
 
 from __future__ import annotations
@@ -26,7 +30,7 @@ import pandas as pd
 
 from src.data_loader import (
     add_geography,
-    append_price_atlas_tail,
+    combine_csv_history_with_price_atlas,
     clean_prices,
     filter_prices_by_yearly_universe,
     load_price_atlas_prices,
@@ -74,9 +78,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--price-source",
         choices=["excel", "yearly"],
         default="yearly",
-        help="Use annual CSV files from 2006-2024 plus the PRICE ATLAS Excel tail "
-             "for 2025-2026 by default, with the tail rebased on the CSV overlap. "
-             "Use 'excel' to match notebook 01 only.",
+        help="Use PRICE ATLAS as the primary source from 2013 onward and annual "
+             "CSV files only to backfill the pre-2013 history needed for a "
+             "2006-to-today backtest. Use 'excel' for the Excel-only panel.",
+    )
+    parser.add_argument(
+        "--include-historical-extras",
+        action="store_true",
+        help="Keep tickers that appear only in the yearly CSV history. Off by "
+             "default because Presentation 1 follows the static 2025-2026 "
+             "Excel universe requested by Vincent.",
     )
     parser.add_argument(
         "--universe-json",
@@ -123,8 +134,23 @@ def _melt_wide(wide, value_name):
     )
 
 
-def load_price_history(raw_dir, excel_path, start_year, end_year, price_source="excel"):
-    """Load the price history from the notebook source or the yearly CSV archive."""
+def load_static_universe_tickers(excel_path):
+    """Return the ticker columns from the static PRICE ATLAS workbook."""
+    if not excel_path.exists():
+        return []
+    cols = pd.read_excel(excel_path, sheet_name="price", nrows=0).columns
+    return [col for col in cols if col not in {"Ticker", "Date", "date"}]
+
+
+def load_price_history(
+    raw_dir,
+    excel_path,
+    start_year,
+    end_year,
+    price_source="excel",
+    include_historical_extras=False,
+):
+    """Load the price history from Excel, optionally backfilled by yearly CSVs."""
     if price_source == "excel":
         if not excel_path.exists():
             raise FileNotFoundError(f"PRICE ATLAS workbook not found: {excel_path}")
@@ -140,14 +166,16 @@ def load_price_history(raw_dir, excel_path, start_year, end_year, price_source="
         end_year=min(end_year, 2024),
     )
 
-    if excel_path.exists() and end_year >= 2025:
-        atlas_start_year = min(2024, max(start_year, 2013))
+    if excel_path.exists():
         atlas_prices = load_price_atlas_prices(
             excel_path,
-            start_year=atlas_start_year,
+            start_year=start_year,
             end_year=end_year,
         )
-        return append_price_atlas_tail(raw_prices, atlas_prices)
+        prices = combine_csv_history_with_price_atlas(raw_prices, atlas_prices)
+        if not include_historical_extras:
+            prices = prices.reindex(columns=atlas_prices.columns)
+        return prices
 
     return raw_prices
 
@@ -292,6 +320,31 @@ def build_sector_returns(feature_panel):
     return sector_returns.sort_values(["date", "sector"]).reset_index(drop=True)
 
 
+def static_universe_coverage(prices):
+    """Summarise yearly coverage for the chosen static working universe."""
+    rows = []
+    coverage_by_ticker = (
+        prices.notna()
+        .groupby(prices.index.year)
+        .sum()
+        .rename_axis("year")
+    )
+    for year, frame in prices.groupby(prices.index.year):
+        observations = coverage_by_ticker.loc[year]
+        rows.append({
+            "year": int(year),
+            "trading_dates": int(frame.shape[0]),
+            "static_working_tickers": int(prices.shape[1]),
+            "tickers_with_any_price": int((observations > 0).sum()),
+            "tickers_with_100_prices": int((observations >= 100).sum()),
+            "tickers_with_200_prices": int((observations >= 200).sum()),
+            "median_observations": float(observations[observations > 0].median())
+            if (observations > 0).any()
+            else 0.0,
+        })
+    return pd.DataFrame(rows)
+
+
 def build_dataset(
     raw_dir,
     out_dir,
@@ -306,6 +359,7 @@ def build_dataset(
     filter_universe,
     min_observations,
     max_tickers,
+    include_historical_extras,
 ):
     raw_dir = _resolve(raw_dir)
     out_dir = _resolve(out_dir)
@@ -313,7 +367,16 @@ def build_dataset(
     universe_path = _resolve(universe_json)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    prices = load_price_history(raw_dir, excel_path, start_year, end_year, price_source)
+    static_tickers = load_static_universe_tickers(excel_path)
+    prices = load_price_history(
+        raw_dir,
+        excel_path,
+        start_year,
+        end_year,
+        price_source,
+        include_historical_extras=include_historical_extras,
+    )
+    tickers_before_min_obs = list(prices.columns)
     prices = clean_prices(prices, min_price=min_price, ffill_limit=ffill_limit)
 
     coverage = pd.DataFrame()
@@ -327,6 +390,25 @@ def build_dataset(
     prices = prices.dropna(axis=1, thresh=min_observations)
     if max_tickers is not None:
         prices = prices.iloc[:, :max_tickers]
+
+    static_coverage = static_universe_coverage(prices)
+
+    source_policy = pd.DataFrame([{
+        "source_policy": (
+            "static_excel_universe_with_csv_pre2013_backfill"
+            if price_source == "yearly" and not include_historical_extras
+            else price_source
+        ),
+        "static_excel_tickers": len(static_tickers),
+        "tickers_before_min_observations": len(tickers_before_min_obs),
+        "tickers_after_min_observations": len(prices.columns),
+        "historical_extra_tickers_included": bool(include_historical_extras),
+        "historical_extra_tickers_before_filter": len(set(tickers_before_min_obs) - set(static_tickers)),
+        "static_tickers_dropped_by_min_observations": len(set(static_tickers) - set(prices.columns)),
+        "start_date": prices.index.min().date() if len(prices.index) else pd.NaT,
+        "end_date": prices.index.max().date() if len(prices.index) else pd.NaT,
+        "min_observations": min_observations,
+    }])
 
     sector_path = _resolve(sector_mapping) if sector_mapping else None
     sector_df = load_sector_mapping(sector_path) if sector_path and sector_path.exists() else None
@@ -355,6 +437,8 @@ def build_dataset(
     model_features.to_csv(out_dir / "model_features_panel.csv", index=False)
     benchmarks.to_csv(out_dir / "benchmark_stoxx600_ew.csv", index=False)
     market_returns.reset_index().to_csv(out_dir / "benchmark_returns.csv", index=False)
+    source_policy.to_csv(out_dir / "source_policy_summary.csv", index=False)
+    static_coverage.to_csv(out_dir / "static_universe_coverage.csv", index=False)
     if not sector_returns.empty:
         sector_returns.to_csv(out_dir / "sector_returns.csv", index=False)
 
@@ -367,6 +451,8 @@ def build_dataset(
         "relative_cols": relative_cols,
         "sector_available": bool(sector_available),
         "coverage_rows": len(coverage),
+        "static_coverage_rows": len(static_coverage),
+        "source_policy": source_policy.iloc[0].to_dict(),
         "out_dir": out_dir,
     }
 
@@ -387,6 +473,7 @@ def main() -> None:
         filter_universe=args.filter_universe,
         min_observations=args.min_observations,
         max_tickers=args.max_tickers,
+        include_historical_extras=args.include_historical_extras,
     )
 
     print("Dataset built successfully")
@@ -396,6 +483,13 @@ def main() -> None:
     print(f"Relative columns: {', '.join(summary['relative_cols'])}")
     print(f"Sector mapping active: {summary['sector_available']}")
     print(f"Universe coverage rows: {summary['coverage_rows']}")
+    print(f"Static coverage rows: {summary['static_coverage_rows']}")
+    print(f"Source policy: {summary['source_policy']['source_policy']}")
+    print(f"Static Excel tickers: {summary['source_policy']['static_excel_tickers']}")
+    print(
+        "Static tickers dropped by min observations: "
+        f"{summary['source_policy']['static_tickers_dropped_by_min_observations']}"
+    )
     print(f"Output folder: {summary['out_dir']}")
 
 

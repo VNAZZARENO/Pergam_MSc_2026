@@ -19,16 +19,16 @@ The paper is the methodological reference, but the current ESILV/Pergam
 implementation is adapted from futures to STOXX Europe 600 equities.
 
 - Universe reference: `data/raw/stoxx600/2025_2026_PRICE_ATLAS_data_sxxr_static.xlsx`.
-- Historical price source: yearly CSV files `prices_2006.csv` to
-  `prices_2024.csv`.
-- Recent price tail: the PRICE ATLAS Excel workbook for 2025-2026, rescaled on
-  the latest overlapping CSV date before being appended.
+- Historical backfill: yearly CSV files are used for the pre-2013 history.
+- Main price source: the PRICE ATLAS Excel workbook is used from 2013 onward,
+  because it is the requested static source and has cleaner coverage for current
+  STOXX 600 names.
 - Production panel: `data/processed/stoxx600/stoxx600_processed.csv`, in long
   format with `date`, `ticker`, `price` and engineered features.
 
-This keeps one coherent price panel for CPD, model training and backtesting,
-while still following Vincent's instruction to use the static 2025-2026 file as
-the universe reference.
+This keeps one coherent price panel for CPD, model training and backtesting:
+CSV files extend the history back to 2006, while the Excel workbook remains the
+primary source whenever it is available.
 
 ---
 
@@ -128,7 +128,7 @@ Pergam_MSc_2026/
 │   ├── raw/                    # Original Pinnacle / futures CSVs
 │   └── processed/              # Cleaned returns, features, CPD outputs
 ├── src/                        # Library code
-│   ├── data_loader.py          # Load raw futures data
+│   ├── data_loader.py          # Load STOXX 600 CSV/Excel prices
 │   ├── preprocessing.py        # Returns, EWM vol, vol scaling
 │   ├── features.py             # Normalized returns + MACD
 │   ├── cpd.py                  # GP Matérn 3/2 + changepoint kernel
@@ -139,7 +139,9 @@ Pergam_MSc_2026/
 │   ├── 01_build_dataset.py
 │   ├── 02_compute_cpd.py
 │   ├── 03_train_dmn.py
-│   └── 04_run_backtest.py
+│   ├── 03_train_lstm_dmn.py
+│   ├── 04_run_backtest.py
+│   └── 05_build_final_comparison.py
 └── notebooks/
     └── 00_exploration.ipynb
 ```
@@ -150,34 +152,37 @@ DMN-style model experiments and backtesting.
 
 ---
 
-## Planned Work
+## Current Status And Next Work
 
 1. **Data pipeline**
-   - Collect continuous futures data (Pinnacle CLC or open alternatives).
-   - Compute arithmetic returns, volatility scaling, MACD features.
+   - Working long-format STOXX 600 panel from 2006-01-02 to 2026-04-10.
+   - Static 2025-2026 Excel workbook defines the working universe.
+   - Yearly CSV files are used by default only as pre-2013 price backfill.
 
 2. **Changepoint Detection module**
-   - Implement the Matérn 3/2 kernel GP fit.
-   - Implement the changepoint kernel with sigmoid blending.
-   - Precompute `(ν, γ)` for multiple LBWs (10, 21, 63, 126, 252 days).
+   - Fast scalable CPD scores are computed on stock-vs-sector returns, because
+     the first presentation focuses on idiosyncratic shocks.
+   - The slower paper-style GP/Matern changepoint method remains available as a
+     reference method for targeted samples.
 
 3. **Deep Momentum Network**
-   - LSTM with Sharpe-ratio loss, Adam optimizer, early stopping on validation
-     Sharpe.
-   - Hyperparameter search over dropout, hidden size, LBW, learning rate.
+   - `DMN-lite` provides a simple walk-forward supervised allocation baseline.
+   - `03_train_lstm_dmn.py` provides the first PyTorch LSTM trained with a
+     differentiable Sharpe-ratio loss.
+   - A no-CPD LSTM ablation is available for comparison.
 
 4. **Backtesting engine**
-   - Expanding-window backtest from 1995 to the most recent data.
-   - Full benchmarking against Long Only, MACD and TSMOM variants.
-   - Risk-adjusted metrics: Sharpe, Sortino, Calmar, MDD.
+   - Rule-based strategies, DMN-lite, LSTM with CPD, LSTM without CPD, EW
+     benchmark and SXXR benchmark are compared in one final summary.
+   - Risk-adjusted metrics include Sharpe, Sortino, Calmar, max drawdown, hit
+     ratio, average assets and turnover.
 
-5. **Improvements and extensions**
-   - Transaction cost modeling directly inside the Sharpe loss.
-   - Alternative changepoint methods (BOCPD, CUSUM, neural CPD).
-   - Alternative architectures (Temporal Fusion Transformer, attention-based
-     models).
-   - Regime-aware ensembling of multiple LBWs.
-   - Out-of-sample extension to post-2020 data.
+5. **Near-term improvements**
+   - Add a validation split and early stopping inside each walk-forward fold.
+   - Tune LSTM regularization and turnover control.
+   - Test more informative CPD transformations, such as persistence, recent
+     maximum score, shock sign or multiple lookback windows.
+   - Add transaction costs and benchmark-aware portfolio constraints.
 
 ---
 

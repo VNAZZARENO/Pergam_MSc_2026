@@ -1,7 +1,9 @@
-"""Run the first STOXX 600 rule-based backtest.
+"""Run the STOXX 600 rule-based and model-position backtests.
 
-This is not yet the full LSTM/DMN from the paper. It is the first complete
-trading experiment: slow momentum, fast reversion and optional CPD adjustment.
+The script evaluates transparent slow-momentum / fast-reversion baselines,
+optional model positions from part 03, and raw market benchmarks. Keeping the
+benchmarks in the same output file makes the notebook interpretation harder to
+overstate.
 """
 
 from __future__ import annotations
@@ -36,11 +38,12 @@ PANEL_COLUMNS = [
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run a transparent slow-momentum / fast-reversion backtest.",
+        description="Run rule-based, model-position and benchmark backtests.",
     )
     parser.add_argument("--data-dir", default="data/processed/stoxx600")
     parser.add_argument("--panel-file", default="stoxx600_processed.csv")
     parser.add_argument("--cpd-file", default="cpd_scores_fast.csv")
+    parser.add_argument("--benchmark-file", default="benchmark_stoxx600_ew.csv")
     parser.add_argument("--out-returns", default="backtest_returns.csv")
     parser.add_argument("--out-summary", default="backtest_summary.csv")
     parser.add_argument("--start-date", default="2006-01-02")
@@ -54,10 +57,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--position-col", default="dmn_lite_position")
     parser.add_argument(
+        "--model-strategy",
+        default=None,
+        help="Optional strategy name for the model positions. Useful for ablations "
+             "that share the same position column name.",
+    )
+    parser.add_argument(
         "--max-tickers",
         type=int,
         default=None,
         help="Optional cap for quick checks. Full run uses all tickers.",
+    )
+    parser.add_argument(
+        "--no-benchmarks",
+        action="store_true",
+        help="Do not append EW/SXXR benchmark returns to the output.",
     )
     return parser
 
@@ -118,6 +132,40 @@ def load_positions(data_dir, positions_file, position_col):
     return positions.dropna(subset=[position_col])
 
 
+def load_benchmark_returns(data_dir, benchmark_file, panel, start_date=None, end_date=None):
+    """Load raw EW/SXXR benchmark returns in the same shape as strategy returns."""
+    path = data_dir / benchmark_file
+    if not path.exists():
+        return pd.DataFrame()
+
+    benchmarks = pd.read_csv(path, parse_dates=["date"])
+    benchmarks = benchmarks.dropna(subset=["1d_arith_ret"]).copy()
+    if start_date is not None:
+        benchmarks = benchmarks.loc[benchmarks["date"] >= pd.Timestamp(start_date)]
+    if end_date is not None:
+        benchmarks = benchmarks.loc[benchmarks["date"] <= pd.Timestamp(end_date)]
+
+    asset_counts = panel.groupby("date")["ticker"].nunique()
+    frames = []
+    for benchmark, group in benchmarks.groupby("benchmark", sort=True):
+        frame = group[["date", "1d_arith_ret"]].rename(
+            columns={"1d_arith_ret": "net_return"}
+        )
+        frame["gross_return"] = frame["net_return"]
+        frame["turnover"] = 0.0
+        if benchmark == "EW":
+            frame["n_assets"] = frame["date"].map(asset_counts).astype(float)
+        else:
+            frame["n_assets"] = 1.0
+        frame["cost"] = 0.0
+        frame["net_return_unscaled"] = frame["net_return"]
+        frame["leverage"] = 1.0
+        frame["strategy"] = f"benchmark_{benchmark.lower()}"
+        frames.append(frame)
+
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
 def main() -> None:
     args = build_parser().parse_args()
     data_dir = _resolve(args.data_dir)
@@ -145,8 +193,22 @@ def main() -> None:
             start_date=args.start_date,
             end_date=args.end_date,
         )
+        if args.model_strategy is not None:
+            model_returns["strategy"] = args.model_strategy
         returns = pd.concat([returns, model_returns], ignore_index=True)
         summary = performance_summary(returns)
+
+    if not args.no_benchmarks:
+        benchmark_returns = load_benchmark_returns(
+            data_dir,
+            args.benchmark_file,
+            panel,
+            start_date=args.start_date,
+            end_date=args.end_date,
+        )
+        if not benchmark_returns.empty:
+            returns = pd.concat([returns, benchmark_returns], ignore_index=True)
+            summary = performance_summary(returns)
 
     returns_path = data_dir / args.out_returns
     summary_path = data_dir / args.out_summary

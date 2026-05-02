@@ -10,8 +10,11 @@ paths:
   all_stocks_csv: "../data/universe/stoxx600/all_sxxp_stocks.csv"    # Liste complète de tous les tickers historiques
   output_dir: "../data/processed/stoxx600"      # Dossier de sortie pour le panel nettoyé
 
-# Univers 
-csv_year_range: [2006, 2024]  
+# Univers
+# Presentation 1: the static 2025-2026 Excel workbook defines the working
+# universe. Yearly CSV files are used only as pre-2013 price backfill.
+csv_year_range: [2006, 2024]
+include_historical_extras: false
 
 # Log-returns : sur combien de jours on mesure la variation du prix 
 # 1=1 jour, 5=1 semaine, 21=1 mois, 63=1 trimestre, 252=1 an

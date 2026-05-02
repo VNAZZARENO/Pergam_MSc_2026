@@ -1,17 +1,16 @@
 # Presentation 1 - Progress And Current Results Snapshot
 
-This note freezes the current state of the project before adding a heavier
-LSTM/Sharpe-loss model. It is meant to support the first monthly presentation:
-what is already implemented, what the current results say, and what remains to
-be improved. It also keeps a trace of the main corrections and decisions made
-along the way.
+This note freezes the current state of the project for the first monthly
+presentation. It explains what is already implemented, what the current results
+say, and what remains to be improved. It also keeps a trace of the main
+corrections and decisions made along the way.
 
 ## 0. Progress Log
 
 | Step | What changed | Why it mattered | Current status |
 |---|---|---|---|
 | Git branch | Work moved and pushed on `justine/submission`. | Vincent explicitly asked everyone to work on a Git branch. | Done. |
-| Data source | `01_build_dataset.py` now starts in 2006 and uses yearly CSV files by default, then appends a rescaled PRICE ATLAS Excel tail for 2025-2026. | The Excel workbook alone starts in 2013, while Vincent asked for a 2006-to-today backtest; the rescaling avoids artificial source-switch jumps. | Done and rebuilt. |
+| Data source | `01_build_dataset.py` now uses the static 2025-2026 PRICE ATLAS workbook as the working universe. Yearly CSV files are used only as pre-2013 price backfill by default. | This follows Vincent's emphasis on the static Excel file while still allowing a 2006-to-today backtest. | Done and rebuilt. |
 | Long-format panel | Built `stoxx600_processed.csv` with price, returns, volatility, metadata and relative returns. | This matches the requested format: `date`, `ticker`, `price`, features. | Done. |
 | Idiosyncratic returns | Added market-relative and sector-relative returns. | Vincent highlighted idiosyncratic shocks as the useful detection target, not only macro shocks. | Done, can be improved with earnings dates later. |
 | CPD layer | Implemented fast CPD scores and GP-style reference logic. | The paper's key contribution is the CPD signal; the fast layer makes experiments scalable. | Full 2006-2026 stock-vs-sector refresh done. |
@@ -35,8 +34,8 @@ The current pipeline covers the full research chain:
 2. `02_changepoint_detection.ipynb` / `scripts/02_compute_cpd.py`
    - CPD methods: CUSUM, jump score, rolling t-test, BOCPD option, GP-style CPD reference.
    - CPD scores on raw stock returns, market-relative returns, sector-relative returns and sector-level series.
-   - Latest full refresh: stock-vs-sector CPD scores for all 828 tickers, plus sector-level series.
-   - Output: 1,763,349 CPD rows and 10,198 detected changepoints.
+   - Latest full refresh: stock-vs-sector CPD scores for the static working universe, plus sector-level series.
+   - Output: 2,460,913 CPD rows and 14,234 detected changepoints.
 
 3. `03_train_dmn.ipynb` / `scripts/03_train_dmn.py`
    - First supervised model layer: `DMN-lite`.
@@ -53,7 +52,7 @@ The current pipeline covers the full research chain:
    - Ablation output without CPD: `dmn_lstm_no_cpd_positions.csv`.
 
 5. `04_run_backtest.ipynb` / `scripts/04_run_backtest.py`
-   - Backtest of rule-based baselines and DMN-lite positions.
+   - Backtest of rule-based baselines, DMN-lite positions, LSTM positions and raw EW/SXXR benchmarks.
    - Metrics: annual return, annual volatility, Sharpe, Sortino, Calmar, max drawdown, hit ratio, average assets, turnover.
 
 ## 2. Current Backtest Results
@@ -62,26 +61,30 @@ Source file: `data/processed/stoxx600/backtest_summary_final_comparison.csv`
 
 | Strategy | Period | Ann. Return | Ann. Vol | Sharpe | Sortino | Calmar | Max Drawdown | Hit Ratio | Avg Assets | Avg Turnover |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| DMN-lite | 2010-01-04 to 2026-04-10 | 2.85% | 7.43% | 0.42 | 0.53 | 0.15 | -19.31% | 52.47% | 317.96 | 3.59% |
-| Slow momentum | 2006-12-21 to 2026-04-10 | 3.97% | 14.74% | 0.34 | 0.44 | 0.12 | -34.29% | 53.05% | 251.41 | 4.19% |
-| LSTM DMN without CPD | 2010-01-04 to 2026-04-10 | 3.35% | 13.39% | 0.31 | 0.38 | 0.11 | -30.85% | 53.50% | 312.10 | 9.60% |
-| CPD-adjusted | 2006-12-21 to 2026-04-10 | 2.78% | 13.25% | 0.27 | 0.34 | 0.09 | -31.35% | 53.41% | 251.36 | 5.97% |
-| LSTM DMN with CPD | 2010-01-04 to 2026-04-10 | 2.43% | 13.56% | 0.25 | 0.31 | 0.08 | -29.26% | 52.97% | 312.10 | 8.40% |
-| Slow + fast | 2006-12-21 to 2026-04-10 | 1.81% | 12.93% | 0.20 | 0.25 | 0.05 | -33.68% | 53.45% | 251.36 | 4.53% |
+| DMN-lite | 2010-01-04 to 2026-04-10 | 7.58% | 11.00% | 0.72 | 0.83 | 0.23 | -33.12% | 54.32% | 512.06 | 4.49% |
+| EW benchmark | 2006-01-03 to 2026-04-10 | 11.47% | 18.53% | 0.68 | 0.85 | 0.20 | -57.74% | 54.42% | 465.14 | 0.00% |
+| SXXR benchmark | 2013-01-02 to 2026-04-10 | 8.63% | 15.47% | 0.61 | 0.74 | 0.24 | -35.36% | 53.62% | 1.00 | 0.00% |
+| LSTM DMN with CPD | 2010-01-04 to 2026-04-10 | 7.17% | 14.93% | 0.54 | 0.66 | 0.25 | -28.79% | 54.08% | 507.82 | 7.75% |
+| LSTM DMN without CPD | 2010-01-04 to 2026-04-10 | 6.04% | 15.08% | 0.46 | 0.56 | 0.19 | -31.33% | 53.82% | 507.82 | 9.36% |
+| Slow momentum | 2006-12-21 to 2026-04-10 | 4.74% | 14.64% | 0.39 | 0.49 | 0.14 | -33.73% | 54.03% | 452.69 | 4.10% |
+| CPD-adjusted | 2006-12-21 to 2026-04-10 | 4.19% | 13.31% | 0.38 | 0.47 | 0.13 | -31.35% | 53.69% | 452.69 | 5.91% |
+| Slow + fast | 2006-12-21 to 2026-04-10 | 2.90% | 12.95% | 0.29 | 0.35 | 0.09 | -33.60% | 53.81% | 452.69 | 4.50% |
 
 ## 3. Main Interpretation
 
 The current results are encouraging but preliminary.
 
-- DMN-lite has the highest Sharpe ratio in the current comparison.
-- DMN-lite also has the smallest max drawdown.
+- DMN-lite has the highest Sharpe ratio among the model/rule-based strategies.
+- The EW benchmark has the highest raw annual return, but also a much larger
+  drawdown and volatility. It is useful as a sanity benchmark, not as proof that
+  the paper-style strategy is unnecessary.
 - The rule-based CPD-adjusted strategy reduces drawdown versus slow momentum,
   but also lowers annual return and Sharpe.
 - The first LSTM/Sharpe-loss implementation is working end-to-end, but it is
   not yet better than the simpler DMN-lite baseline.
-- In this first run, the LSTM without CPD performs better than the LSTM with
-  CPD. This does not prove CPD is useless; it suggests the CPD feature and LSTM
-  regularization need more tuning before claiming an improvement.
+- In this first static-universe rebuild, the LSTM with CPD improves versus the
+  no-CPD ablation on Sharpe, drawdown and turnover. This is a useful first sign,
+  but not yet a final statistical claim.
 - The most defensible presentation message is therefore: the full pipeline is
   reproducible, walk-forward, and now includes a paper-style LSTM baseline, but
   the strongest current empirical result is still the simpler DMN-lite model.
@@ -92,41 +95,47 @@ The project started from the paper structure: slow momentum, fast reversion,
 CPD, then a DMN-style allocation model. The first implementation effort focused
 on making the data reliable and reproducible before optimizing the model.
 
-The main correction was the separation between the universe source and the
-historical price source. Vincent asked us to use the static 2025-2026 Excel file
-for the universe, and also said that the backtest can run from 2006 to today.
-The Excel workbook alone starts in 2013, so it cannot be the only source for a
-2006-to-today empirical backtest.
+The main correction was the separation between the preferred source and the
+historical backfill. Vincent asked us to use the static 2025-2026 Excel file,
+and also said that the backtest can run from 2006 to today. The Excel workbook
+starts in 2013, so it cannot by itself cover the pre-2013 history.
 
-The production pipeline therefore uses the yearly CSV files as the continuous
-historical price source for 2006-2024, then appends the 2025-2026 PRICE ATLAS
-tail. The tail is rescaled ticker by ticker on the latest overlapping date
-before being appended, because the CSV and Excel sources are close in returns
-but not identical in raw price levels. Without this rescaling, the switch of
-source can create artificial one-day returns around the 2024-2025 boundary.
+The production pipeline therefore uses the PRICE ATLAS Excel workbook as the
+primary price source from 2013 onward, and uses the yearly CSV files only to
+backfill 2006-2012. The pre-2013 CSV history is rebased ticker by ticker on the
+first valid Excel price so that the 2012-2013 source switch does not create an
+artificial one-day return. This also gives cleaner post-2013 coverage for key
+current names such as ASML.
 
 The interpretation is now:
 
-- `prices_2006.csv` to `prices_2024.csv` are raw historical price files. They
-  are read-only inputs and must not be modified.
-- `2025_2026_PRICE_ATLAS_data_sxxr_static.xlsx` is used for the static universe
-  / metadata reference and for the recent 2025-2026 price tail.
-- The 2025-2026 Excel tail is rebased on the last overlapping CSV date before
-  being joined to the historical CSV archive.
+- `prices_2006.csv` to `prices_2024.csv` are raw historical price files. In the
+  final source policy, they are used only for dates before the Excel workbook
+  starts.
+- `2025_2026_PRICE_ATLAS_data_sxxr_static.xlsx` is used as the primary source
+  from 2013 onward and as the static universe / metadata reference.
+- The pre-2013 CSV history is rebased on the first available Excel level before
+  being joined to the Excel archive.
 - All transformations, feature engineering and cleaning outputs are written
   downstream in `data/processed/stoxx600/`.
 
-This is consistent with Vincent's instruction: the static 2025-2026 workbook is
-the universe reference, while the annual CSV files provide the historical price
-depth needed for a 2006-to-today empirical backtest. It also avoids using one
-price source for CPD/model features and another one for the backtest.
+This is consistent with Vincent's instruction: the static 2025-2026 workbook
+remains the preferred source whenever it is available, while the annual CSV
+files provide the extra pre-2013 depth needed for a 2006-to-today empirical
+backtest. It also avoids using one price source for CPD/model features and
+another one for the backtest.
 
 Latest rebuild check:
 
 - `stoxx600_processed.csv` date range: 2006-01-02 to 2026-04-10.
-- Feature rows: 1,705,321.
-- Unique tickers observed across the full raw history: 828.
+- Feature rows: 2,451,470.
+- Static Excel tickers: 600.
+- Unique tickers in the final production panel after the minimum-observation
+  filter: 599.
+- Static tickers missing after filtering: `PHNX LN`.
+- Historical-only CSV tickers included by default: 0.
 - Duplicate `(date, ticker)` rows: 0.
+- `cpd_scores_fast.csv`: 2,460,913 rows and 14,234 detected changepoints.
 - The raw annual CSV files remain unchanged; only processed outputs are
   regenerated.
 
@@ -187,23 +196,27 @@ Elle sert de mémo de compréhension pour préparer la présentation.
 
 ### Notebook 01 vs script de production
 
-Le notebook 01 sert surtout à expliquer et vérifier les définitions de données.
-Il lit le fichier Excel `2025_2026_PRICE_ATLAS_data_sxxr_static.xlsx`, qui est
-facile à inspecter mais commence en 2013. C'est pour cela que le notebook peut
-afficher une période 2013-2026.
+Le notebook 01 sert à expliquer et vérifier le panel de production utilisé par
+la suite du projet. Il affiche d'abord `stoxx600_processed.csv`, c'est-à-dire le
+panel final 2006-2026 utilisé par les notebooks 02-04.
+
+L'Excel `2025_2026_PRICE_ATLAS_data_sxxr_static.xlsx` est aussi inspecté, mais
+il n'est plus présenté comme un simple aperçu séparé : il est la source
+principale des prix à partir de 2013.
 
 Le dataset final utilisé par les notebooks 02-04 est généré par
-`scripts/01_build_dataset.py`. Ce script lit les CSV annuels
-`prices_2006.csv` à `prices_2024.csv`, puis ajoute la fin 2025-2026 depuis
-l'Excel. Avant de raccorder l'Excel, le script recale les niveaux de prix de
-l'Excel sur la dernière date commune avec les CSV. Cela évite qu'un changement
-de source crée un faux rendement extrême au passage 2024-2025.
+`scripts/01_build_dataset.py`. Ce script utilise l'Excel comme source principale
+des prix de 2013 à 2026. Les CSV annuels servent seulement à compléter
+l'historique 2006-2012, qui n'existe pas dans l'Excel. Avant de raccorder les
+deux sources, le script recale les niveaux du pré-2013 CSV sur le premier niveau
+Excel disponible par ticker. Cela évite qu'un changement de source crée un faux
+rendement extrême au passage 2012-2013.
 
 On ne mélange donc pas les sources de manière arbitraire :
 
-- l'Excel static 2025-2026 sert à définir l'univers demandé par Vincent et à
-  compléter la période récente ;
-- les CSV annuels servent de source historique continue pour les prix ;
+- l'Excel static 2025-2026 sert à définir l'univers demandé par Vincent et
+  devient la source prix principale dès 2013 ;
+- les CSV annuels servent à compléter l'historique avant 2013 ;
 - les features, la CPD, le modèle et le backtest utilisent ensuite le même
   panel traité.
 
@@ -221,9 +234,9 @@ fonctions pour construire le pipeline complet.
 - `src/data_loader.py`
   - `load_stoxx600_prices()` : lit les CSV annuels de prix.
   - `load_price_atlas_prices()` : lit les prix depuis l'Excel PRICE ATLAS.
-  - `append_price_atlas_tail()` : ajoute les dates 2025-2026 de l'Excel après
-    l'historique CSV, en recalant d'abord les niveaux de prix sur la dernière
-    date commune entre CSV et Excel.
+  - `combine_csv_history_with_price_atlas()` : combine les CSV avant 2013 avec
+    l'Excel à partir de 2013, en recalant les niveaux de prix au changement de
+    source.
   - `clean_prices()` : retire les prix aberrants et bouche seulement les petits
     trous.
   - `prices_to_panel()` : transforme les prix du format large vers le format
@@ -482,9 +495,9 @@ backtest results.
 
 The first LSTM/Sharpe-loss implementation has now been added as a separate
 script, not as a replacement for DMN-lite. This keeps the baseline comparable
-while allowing the project to move toward the paper's architecture. The next
-step is to run the LSTM on the full intended universe/date range, then backtest
-`dmn_lstm_positions.csv` next to the existing strategies.
+while allowing the project to move toward the paper's architecture. The first
+with-CPD and no-CPD LSTM runs have both been backtested next to the existing
+strategies.
 
 The first full CPU LSTM experiment has now been run with annual expanding
 walk-forward folds from 2010 to 2026. It uses a 63-day input sequence, two
@@ -522,7 +535,7 @@ hyperparameter selection and early stopping.
 
 ## 6. Next Technical Step
 
-The next step is to turn the new LSTM script into a full result:
+The next step is to make the LSTM result more defensible:
 
 1. Add a validation split inside each walk-forward fold for hyperparameter
    selection and early stopping.
@@ -537,6 +550,7 @@ The next step is to turn the new LSTM script into a full result:
 
 The key presentation message is:
 
-> We first built a complete and reproducible pipeline. The next step is to
-> replace the DMN-lite model by the paper-style LSTM trained with a Sharpe loss,
-> then test whether CPD improves performance out of sample.
+> We first built a complete and reproducible pipeline. The static-universe
+> rebuild is now coherent from data loading to CPD, LSTM ablation and backtest.
+> The next step is to make the LSTM/CPD result statistically stronger through
+> validation, regularization and better CPD feature design.

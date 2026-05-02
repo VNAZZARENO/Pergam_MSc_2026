@@ -135,49 +135,51 @@ def load_price_atlas_prices(path, start_year=None, end_year=None, sheet_name="pr
     return prices
 
 
-# [LOAD] append_price_atlas_tail
-# Ajoute les dates recentes de l'Excel en recalant les niveaux sur l'historique CSV.
-def append_price_atlas_tail(prices, atlas_prices):
-    """Append the PRICE ATLAS tail after rescaling it to the CSV history.
+# [LOAD] combine_csv_history_with_price_atlas
+# Utilise l'Excel comme source principale des qu'il existe, et les CSV avant.
+def combine_csv_history_with_price_atlas(csv_prices, atlas_prices):
+    """Combine historical CSV prices with the PRICE ATLAS source.
 
-    The yearly CSV archive is the continuous historical source through 2024,
-    while the PRICE ATLAS workbook provides the recent 2025-2026 tail. Their
-    raw price levels can differ on the overlapping dates, so common tickers are
-    rescaled on the latest shared date before appending. This keeps returns
-    around the source switch from being dominated by an artificial level jump.
+    The PRICE ATLAS workbook is the preferred source once it starts because it
+    is the static file requested for the STOXX 600 universe and has cleaner
+    coverage for current names. Yearly CSV files are used only to backfill the
+    pre-Excel history needed for a 2006-to-today backtest.
+
+    For common tickers, the pre-Excel CSV history is rebased to the first valid
+    Excel price so that the 2012-2013 source switch does not create artificial
+    one-day returns.
     """
-    if prices.empty:
+    if csv_prices.empty:
+        return atlas_prices.sort_index()
+    if atlas_prices.empty:
+        return csv_prices.sort_index()
+
+    atlas_start = atlas_prices.index.min()
+    history = csv_prices.loc[csv_prices.index < atlas_start].copy()
+    if history.empty:
         return atlas_prices.sort_index()
 
-    tail = atlas_prices.loc[atlas_prices.index > prices.index.max()]
-    if tail.empty:
-        return prices.sort_index()
-
-    common_cols = prices.columns.intersection(atlas_prices.columns)
+    common_cols = history.columns.intersection(atlas_prices.columns)
     if len(common_cols):
         scale_values = {}
         for col in common_cols:
-            overlap = pd.DataFrame({
-                "csv": prices[col],
-                "atlas": atlas_prices[col],
-            }).dropna()
-            overlap = overlap.loc[overlap["atlas"] != 0]
-            if overlap.empty:
+            hist = history[col].dropna()
+            atlas = atlas_prices[col].dropna()
+            atlas = atlas.loc[atlas != 0]
+            if hist.empty or atlas.empty:
                 continue
-            anchor = overlap.iloc[-1]
-            scale_values[col] = anchor["csv"] / anchor["atlas"]
+            scale_values[col] = atlas.iloc[0] / hist.iloc[-1]
 
         scale = pd.Series(scale_values, dtype="float64").replace(
             [float("inf"), float("-inf")],
             pd.NA,
         ).dropna()
-        tail = tail.copy()
-        tail.loc[:, scale.index] = tail.loc[:, scale.index].multiply(
+        history.loc[:, scale.index] = history.loc[:, scale.index].multiply(
             scale,
             axis=1,
         )
 
-    combined = pd.concat([prices, tail], axis=0, sort=True)
+    combined = pd.concat([history, atlas_prices], axis=0, sort=True)
     combined = combined[~combined.index.duplicated(keep="first")]
     return combined.sort_index()
 

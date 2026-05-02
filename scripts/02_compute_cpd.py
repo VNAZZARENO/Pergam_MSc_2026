@@ -3,14 +3,12 @@
 The base design is still one CPD run per time series. The improvement is that
 the time series now come from the cleaner 01 pipeline:
 
-* stock raw returns,
-* stock returns relative to the equal-weight market,
-* stock returns relative to SXXR when available,
 * stock returns relative to their equal-weight sector,
 * equal-weight sector return series for sector-level CPD.
 
 No parameter search is done here. The goal is to avoid overfitting and produce
-stable, comparable CPD features for the next modelling/backtest steps.
+stable, comparable CPD features for the next modelling/backtest steps. Raw and
+market-relative series remain available as explicit options for diagnostics.
 """
 
 from __future__ import annotations
@@ -53,8 +51,6 @@ ROBUST_SECTOR_SAMPLE_TICKERS = (
 )
 
 DEFAULT_STOCK_SERIES = (
-    "stock_raw",
-    "stock_vs_ew",
     "stock_vs_sector",
 )
 
@@ -83,7 +79,8 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="+",
         default=list(DEFAULT_STOCK_SERIES),
         choices=sorted(STOCK_SERIES_COLUMNS),
-        help="Stock-level series to run CPD on.",
+        help="Stock-level series to run CPD on. The default is stock_vs_sector "
+             "because idiosyncratic shocks are the presentation focus.",
     )
     parser.add_argument(
         "--include-sector-level",
@@ -116,6 +113,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--threshold", type=float, default=0.55)
     parser.add_argument("--cooldown", type=int, default=30)
+    parser.add_argument(
+        "--min-observations",
+        type=int,
+        default=252,
+        help="Skip stock or sector CPD series with fewer valid returns.",
+    )
     parser.add_argument("--lbw", type=int, default=21)
     parser.add_argument("--stride", type=int, default=10)
     parser.add_argument(
@@ -134,7 +137,13 @@ def _resolve(path):
 def load_stock_panel(in_dir, stocks_file):
     """Load the processed panel produced by 01."""
     path = _resolve(in_dir) / stocks_file
-    return pd.read_csv(path, parse_dates=["date"])
+    return pd.read_csv(
+        path,
+        parse_dates=["date"],
+        keep_default_na=False,
+        na_values=[""],
+        low_memory=False,
+    )
 
 
 def load_sector_panel(in_dir, sectors_file):
@@ -249,7 +258,7 @@ def compute_one_series(
     return frame
 
 
-def build_stock_series(stocks, tickers, series_types):
+def build_stock_series(stocks, tickers, series_types, min_observations):
     """Yield stock-level return series from the 01 processed panel."""
     missing_columns = [
         STOCK_SERIES_COLUMNS[series_type]
@@ -266,17 +275,20 @@ def build_stock_series(stocks, tickers, series_types):
         sector = stock["sector"].dropna().iloc[-1] if "sector" in stock and stock["sector"].notna().any() else None
         for series_type in series_types:
             col = STOCK_SERIES_COLUMNS[series_type]
+            returns = stock[col]
+            if returns.notna().sum() < min_observations:
+                continue
             yield {
                 "dates": stock["date"].to_numpy(),
                 "entity": ticker,
                 "scope": "stock",
                 "series_type": series_type,
-                "returns": stock[col],
+                "returns": returns,
                 "sector": sector,
             }
 
 
-def build_sector_series(sectors):
+def build_sector_series(sectors, min_observations):
     """Yield sector-level equal-weight return series."""
     if sectors.empty:
         return
@@ -284,12 +296,15 @@ def build_sector_series(sectors):
         raise KeyError("sector_returns.csv must contain sector_1d_ret or sector_1d_ret_lag1.")
     for sector, group in sectors.groupby("sector", sort=True):
         group = group.sort_values("date")
+        returns = group["sector_1d_ret_lag1"]
+        if returns.notna().sum() < min_observations:
+            continue
         yield {
             "dates": group["date"].to_numpy(),
             "entity": sector,
             "scope": "sector",
             "series_type": "sector_ew",
-            "returns": group["sector_1d_ret_lag1"],
+            "returns": returns,
             "sector": sector,
         }
 
@@ -327,9 +342,9 @@ def compute_cpd(args):
     sectors = load_sector_panel(in_dir, args.sectors_file)
     tickers = select_tickers(stocks, args.tickers, args.all_tickers, args.max_tickers)
 
-    jobs = list(build_stock_series(stocks, tickers, args.stock_series))
+    jobs = list(build_stock_series(stocks, tickers, args.stock_series, args.min_observations))
     if args.include_sector_level:
-        jobs.extend(list(build_sector_series(sectors)))
+        jobs.extend(list(build_sector_series(sectors, args.min_observations)))
 
     rows = []
     for job in jobs:
