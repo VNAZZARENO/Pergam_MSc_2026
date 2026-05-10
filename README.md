@@ -3,11 +3,12 @@
 Clean research pipeline for the Pergam adaptation of *Slow Momentum with Fast
 Reversion* on STOXX Europe 600 equities.
 
-Only three notebooks are part of the submission pipeline:
+Four notebooks are part of the submission pipeline:
 
 1. `notebooks/01_data_loading.ipynb`
 2. `notebooks/02_changepoint_detection.ipynb`
 3. `notebooks/03_train_dmn.ipynb`
+4. `notebooks/04_backtest.ipynb`
 
 ## Scope
 
@@ -23,7 +24,8 @@ Only three notebooks are part of the submission pipeline:
   event is known.
 - Portfolio constraint in NB03: long-only positions in `[0, 1]`, no short, no leverage.
 - Transaction costs in NB03: 25 bps applied directly in the training loss and diagnostics.
-- Model comparison in NB03: baseline LSTM, LSTM + CUSUM CPD, LSTM + GP CPD.
+- Model comparison in NB03: baseline LSTM, LSTM + CUSUM CPD, LSTM + GP CPD,
+  and LSTM + BOCPD when the BOCPD scores are available.
 - Validation: walk-forward folds from 2019 to 2026.
 
 ## Notebook Roles
@@ -38,7 +40,12 @@ macro events only as a reference metric, and exports the CPD feature consumed by
 NB03.
 
 NB03 trains the long-only LSTM Deep Momentum Network. It compares baseline,
-CUSUM-CPD, and GP-CPD variants with 25 bps transaction costs inside the loss.
+CUSUM-CPD, GP-CPD, and optional BOCPD variants with 25 bps transaction costs
+inside the loss.
+
+NB04 aggregates the NB03 stock-level out-of-sample positions into portfolio
+returns, compares variants with EW/SXXR benchmarks, and saves final backtest
+metrics.
 
 ## Local Data
 
@@ -59,6 +66,7 @@ Run from the repository root:
 jupyter nbconvert --to notebook --execute --inplace notebooks/01_data_loading.ipynb
 jupyter nbconvert --to notebook --execute --inplace notebooks/02_changepoint_detection.ipynb
 jupyter nbconvert --to notebook --execute --inplace notebooks/03_train_dmn.ipynb
+jupyter nbconvert --to notebook --execute --inplace notebooks/04_backtest.ipynb
 ```
 
 ## Pipeline Outputs
@@ -86,8 +94,13 @@ Notebook 03 trains and compares the DMN variants:
 - `data/processed/stoxx600/dmn_metrics.parquet`
 - `data/processed/stoxx600/dmn_diagnostics.parquet`
 
+Notebook 04 aggregates portfolio-level backtest results:
+
+- `data/processed/stoxx600/backtest_portfolio.parquet`
+- `data/processed/stoxx600/backtest_metrics.parquet`
+
 ## Submission Notes
 
-The repository is intentionally trimmed to the three-notebook flow. Exploratory
+The repository is intentionally trimmed to the notebook submission flow. Exploratory
 work, generated HTML, figures, report exports, and obsolete source modules were
 removed from the clean version.
