@@ -1,17 +1,31 @@
+# Local environments
 .venv/
 .claude/
-documentation/resume_papier.aux
-documentation/resume_papier.fdb_latexmk
-documentation/resume_papier.fls
-documentation/resume_papier.log
-documentation/resume_papier.out
-documentation/resume_papier.synctex.gz
 
-# Python / notebooks
+# Python and notebooks
 __pycache__/
-*.ipynb_checkpoints
+*.py[cod]
+.ipynb_checkpoints/
+*.ipynb_checkpoints/
 
-# Data artifacts (keep folder structure via .gitkeep)
+# Local raw data
+data/raw/stoxx600/*
 !data/raw/.gitkeep
+!data/raw/stoxx600/.gitkeep
+
+# Generated data and reports
 data/processed/*
 !data/processed/.gitkeep
+data/results/
+figures/
+documentation/html_exports/
+notebooks/*.html
+notebooks/*_presentable.ipynb
+
+# LaTeX and document build artifacts
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz

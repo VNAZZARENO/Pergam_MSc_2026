@@ -1,48 +1,19 @@
-# ===========================================================================
-# Default configuration 
-# ===========================================================================
+# Default configuration for the clean 01/02/03 pipeline.
+# Paths are resolved from the notebooks directory.
 
-# Chemins relatifs ( depuis le dossier du notebook) 
+project:
+  universe: "STOXX Europe 600"
+  frequency: "daily"
+
 paths:
-  raw_csv_dir: "../data/raw/stoxx600"           # Dossier des CSV de prix annuels
-  excel_2025_2026: "../data/raw/stoxx600/2025_2026_PRICE_ATLAS_data_sxxr_static.xlsx"  # prix 2025-2026
-  universe_json: "../data/universe/stoxx600/universe_by_year.json"   # Liste des tickers dans le Stoxx 600 par année
-  all_stocks_csv: "../data/universe/stoxx600/all_sxxp_stocks.csv"    # Liste complète de tous les tickers historiques
-  output_dir: "../data/processed/stoxx600"      # Dossier de sortie pour le panel nettoyé
+  excel_2025_2026: "../data/raw/stoxx600/SXXR.xlsx"
+  output_dir: "../data/processed/stoxx600"
 
-# Univers
-# Presentation 1: the static 2025-2026 Excel workbook defines the working
-# universe. Yearly CSV files are used only as pre-2013 price backfill.
-csv_year_range: [2006, 2024]
-include_historical_extras: false
-
-# Log-returns : sur combien de jours on mesure la variation du prix 
-# 1=1 jour, 5=1 semaine, 21=1 mois, 63=1 trimestre, 252=1 an
-return_horizons: [1, 5, 21, 63, 252]
-
-# Volatilité rolling (pour normaliser les returns) 
-vol_window: 63          # Taille de la fenêtre 
-vol_min_periods: 21     # Minimum accepté : si on a au moins 21 jours on calcule quand même
-
-# Volatilité EWM (pour le vol-scaling des positions) 
-ewm_span: 60            
-
-# Vol target 
-vol_target: 0.15        
-
-# Nettoyage
-ffill_limit: 5          # Si un prix manque on recopie le dernier connu max 5 jours 
-min_price: 0.01         # Prix < 0.01€ =  NaN
-
-# MACD paires 
-macd_pairs:
-  - [8, 24]             # 8 jours vs 24 jours
-  - [16, 48]            # 16 jours vs 48 jours
-  - [32, 96]            # 32 jours vs 96 jours
-
-# CPD : fenêtres de détection de changements de régime 
-lbw_options: [10, 21, 63, 126, 252]  # Tailles de fenêtre à tester
-lbw_default: 21                       # par défaut 
-
-# LSTM horizons 
-horizons: [1, 21, 63, 126, 252]
+nb03:
+  first_test_year: 2019
+  last_test_year: 2026
+  transaction_cost_bps: 25
+  variants:
+    - baseline
+    - cpd_cusum
+    - cpd_gp

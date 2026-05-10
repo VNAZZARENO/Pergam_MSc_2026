@@ -1,13 +1,11 @@
-# Planned dependencies for the Slow Momentum with Fast Reversion project.
-# Uncomment / pin versions once the .venv is finalized.
-#
-# numpy
-# pandas
-# scipy
-# matplotlib
+numpy
+pandas
+pyarrow
+openpyxl
+pyyaml
+matplotlib
 plotly>=5.0
+scipy
 torch>=2.0
-# scikit-learn
-# gpflow
-# tensorflow
-# pyyaml
+jupyter
+nbconvert
