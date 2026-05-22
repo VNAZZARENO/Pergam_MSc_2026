@@ -231,7 +231,7 @@ def compute_returns(price_filled: pd.DataFrame,
         "sec_rel_1d":    sec_rel_1d,
     }
     for h, label in RETURN_HORIZONS[1:]:
-        out[f"mkt_rel_{label}"] = mkt_rel_1d.rolling(h, min_periods=h).sum()
+        out[f"mkt_rel_{label}"] = mkt_rel_1d.rolling(h, min_periods=max(1, int(h * 0.8))).sum()
 
     return out
 
@@ -376,9 +376,10 @@ def validate_no_lookahead(panel: pd.DataFrame) -> pd.DataFrame:
             "detail": f"{mismatch} mismatches on {ref}_lag1",
         })
 
-    # Check target = shift(-1) of clean_return
+    # Check target = shift(-1) of clean_return (NaN-safe comparison)
     expected_target = grp["clean_return"].shift(-1)
-    ok = data["next_return"].eq(expected_target).fillna(True).all()
+    both_nan = data["next_return"].isna() & expected_target.isna()
+    ok = (data["next_return"].eq(expected_target) | both_nan).all()
     checks.append({
         "check":  "next_return = shift(-1) of clean_return",
         "status": "OK" if ok else "FAIL",
