@@ -441,15 +441,20 @@ def extract_nu_gamma(scores: np.ndarray,
     return nu, gamma
 
 
-def build_nb03_features(cpd_scores: pd.DataFrame,
-                        threshold: float = 0.5) -> pd.DataFrame:
-    """Build wide (date, ticker) feature table with nu/gamma for each method, lagged 1 day."""
+def build_nb03_features(cpd_scores: pd.DataFrame) -> pd.DataFrame:
+    """Build wide (date, ticker) feature table with nu/gamma for each method, lagged 1 day.
+
+    Threshold is adaptive per (method, ticker): 90th percentile of non-zero scores.
+    """
     parts = []
     for method, grp in cpd_scores.groupby("method", observed=True):
         method = str(method)
         for ticker, sub in grp.groupby("ticker", observed=True):
-            sub   = sub.sort_values("date").reset_index(drop=True)
-            nu, gamma = extract_nu_gamma(sub["score"].to_numpy(), threshold=threshold)
+            sub  = sub.sort_values("date").reset_index(drop=True)
+            s    = sub["score"].to_numpy()
+            pos  = s[s > 0]
+            thr  = float(np.nanpercentile(pos, 90)) if len(pos) > 0 else 0.5
+            nu, gamma = extract_nu_gamma(s, threshold=thr)
             parts.append(pd.DataFrame({
                 "date":                    sub["date"],
                 "ticker":                  ticker,
@@ -499,12 +504,12 @@ def build_daily_scores(cpd_scores: pd.DataFrame,
     """Cross-sectional q-th percentile score per (method, date), with event flags."""
     daily = (cpd_scores.groupby(["method", "date"], observed=True)["score"]
              .quantile(q).reset_index(name="daily_score"))
-    wins  = _event_windows(known_events)
-    dates = daily["date"].drop_duplicates()
-    is_ev = pd.Series(False, index=dates)
+    wins         = _event_windows(known_events)
+    unique_dates = daily["date"].drop_duplicates().sort_values().reset_index(drop=True)
+    is_ev        = np.zeros(len(unique_dates), dtype=bool)
     for row in wins.itertuples(index=False):
-        is_ev |= dates.between(row.start, row.end)
-    ev_map = is_ev.reset_index().rename(columns={"index": "date", 0: "is_event"})
+        is_ev |= (unique_dates >= row.start) & (unique_dates <= row.end)
+    ev_map = pd.DataFrame({"date": unique_dates.to_numpy(), "is_event": is_ev})
     return daily.merge(ev_map, on="date", how="left").fillna({"is_event": False})
 
 
@@ -585,14 +590,19 @@ def plot_method_on_ticker(ticker_panel:  pd.DataFrame,
                           score:         np.ndarray,
                           method:        str,
                           known_events:  pd.DataFrame,
-                          threshold:     float = 0.5) -> go.Figure:
+                          threshold:     float | None = None) -> go.Figure:
     """Price + CPD score for one ticker and one method.
 
+    Threshold defaults to the 90th percentile of the score series (method-adaptive).
     Green markers = events detected (score >= threshold in window).
     Red markers   = events missed.
     """
     tp = ticker_panel.sort_values("date").reset_index(drop=True)
     dates = tp["date"].to_numpy()
+
+    # Adaptive threshold: 90th percentile of this method's score on this ticker
+    if threshold is None:
+        threshold = float(np.nanpercentile(score[score > 0], 90)) if (score > 0).any() else 0.5
 
     wins = _event_windows(known_events)
     detected, missed = [], []
