@@ -25,8 +25,8 @@ from torch.utils.data import DataLoader, TensorDataset
 # ---------------------------------------------------------------------------
 
 MOMENTUM_FEATURES = [
-    "norm_1d", "norm_5d", "norm_21d", "norm_63d", "norm_252d",
-    "macd_1_21", "macd_8_24", "macd_12_26",
+    "norm_ret_1d", "norm_ret_21d", "norm_ret_63d", "norm_ret_126d", "norm_ret_252d",
+    "macd_8_24", "macd_16_48", "macd_32_96",
     "ewma_vol",
 ]
 CPD_FEATURES = [
