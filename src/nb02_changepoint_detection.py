@@ -1,8 +1,9 @@
-"""NB02: changepoint detection on STOXX 600 — 4 methods compared.
+"""NB02: changepoint detection on STOXX 600 — 5 methods compared.
 
 Fast (full universe):
   adaptive_cusum  — CUSUM with vol-adjusted threshold (team contribution)
   rolling_ttest   — Welch t-test short vs long window (simple reference)
+  jump_process    — point-in-time |z-score| jump detector
 
 Heavy (30-stock stratified sample):
   bocpd           — Bayesian online CPD, posterior run-length probability
@@ -46,6 +47,7 @@ MIN_OBS_SCORE       = 252
 METHOD_COLORS = {
     "adaptive_cusum": "#1f77b4",
     "rolling_ttest":  "#ff7f0e",
+    "jump_process":   "#9467bd",
     "bocpd":          "#2ca02c",
     "gp_matern32":    "#d62728",
 }
@@ -192,6 +194,15 @@ def rolling_ttest_score(x,
     return np.clip(sigmoid((fill_nans(stat) - threshold) / scale), 0, 1)
 
 
+def jump_process_score(x,
+                       z_window: int    = 60,
+                       threshold: float = 3.0,
+                       scale: float     = 1.0) -> np.ndarray:
+    """Point-in-time jump detector: sigmoid of |z-score| above threshold."""
+    z = np.abs(robust_zscore(x, window=z_window))
+    return np.clip(sigmoid((fill_nans(z) - threshold) / scale), 0, 1)
+
+
 # ---------------------------------------------------------------------------
 # CPD algorithms — Heavy
 # ---------------------------------------------------------------------------
@@ -298,6 +309,7 @@ def gp_matern_score(x,
 FAST_METHODS: dict[str, callable] = {
     "adaptive_cusum": adaptive_cusum_score,
     "rolling_ttest":  rolling_ttest_score,
+    "jump_process":   jump_process_score,
 }
 
 HEAVY_METHODS: dict[str, callable] = {
@@ -664,20 +676,10 @@ def plot_method_on_ticker(ticker_panel:  pd.DataFrame,
 def plot_fpr_recall(metrics: pd.DataFrame) -> go.Figure:
     """Scatter FPR (x) vs Recall (y) — one point per method.
 
-    Bubble size ∝ computation time.  Star = ideal point (0, 1).
+    Bubble size ∝ computation time. Ideal = top-left corner (FPR=0, Recall=1).
     """
     fig = go.Figure()
 
-    # Ideal point
-    fig.add_trace(go.Scatter(
-        x=[0], y=[1], mode="markers+text",
-        marker=dict(symbol="star", size=18, color="gold",
-                    line=dict(color="black", width=1)),
-        text=["ideal"], textposition="top right",
-        name="ideal", showlegend=False,
-    ))
-
-    # Methods
     max_sec = max(metrics["mean_sec_per_stock"].max(), 1e-9)
     for _, row in metrics.iterrows():
         sz    = 14 + 30 * (row["mean_sec_per_stock"] / max_sec)
@@ -700,18 +702,9 @@ def plot_fpr_recall(metrics: pd.DataFrame) -> go.Figure:
             ),
         ))
 
-    # Arrow toward ideal
-    fig.add_annotation(
-        x=0.05, y=0.9, ax=0.35, ay=0.5,
-        xref="x", yref="y", axref="x", ayref="y",
-        showarrow=True, arrowhead=2, arrowsize=1.3,
-        arrowcolor="rgba(0,150,0,0.5)", arrowwidth=2,
-        text="better →", font=dict(color="rgba(0,120,0,0.8)", size=11),
-    )
-
     fig.update_layout(
         title=("FPR vs Recall — method comparison<br>"
-               "<sup>Bubble size ∝ computation time · Star = ideal</sup>"),
+               "<sup>Bubble size ∝ computation time · ideal = top-left corner</sup>"),
         xaxis=dict(title="False Positive Rate", range=[-0.05, 1.05]),
         yaxis=dict(title="Recall",              range=[-0.05, 1.15]),
         template="plotly_white",
