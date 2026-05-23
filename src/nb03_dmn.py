@@ -37,17 +37,18 @@ CPD_FEATURES = [
 FEATURE_COLS = MOMENTUM_FEATURES + CPD_FEATURES   # 15 features total
 TARGET_COL   = "next_return"
 
-SEQ_LEN       = 21      # LSTM lookback τ (paper: notable gain at 21d, quasi-optimal)
-HIDDEN_SIZE   = 64
-NUM_LAYERS    = 1
-TC_BPS        = 25      # transaction cost proxy in bps
-LEARNING_RATE = 1e-3
-MAX_EPOCHS    = 50
-BATCH_SIZE    = 512
-PATIENCE      = 5       # early stopping patience on validation Sharpe
-VAL_FRAC      = 0.10    # chronological hold-out within training set
-RANDOM_SEED   = 42
-TEST_START    = 2019    # first walk-forward test year
+SEQ_LEN          = 21        # LSTM lookback τ (paper: notable gain at 21d, quasi-optimal)
+HIDDEN_SIZE      = 64
+NUM_LAYERS       = 1
+TC_BPS           = 25        # transaction cost proxy in bps
+LEARNING_RATE    = 1e-3
+MAX_EPOCHS       = 20        # early stopping makes this an upper bound in practice
+BATCH_SIZE       = 512
+PATIENCE         = 5         # early stopping patience on validation Sharpe
+VAL_FRAC         = 0.10      # chronological hold-out within training set
+MAX_TRAIN_SEQ    = 500_000   # sequences cap per fold (CPU feasibility, reproducible)
+RANDOM_SEED      = 42
+TEST_START       = 2019      # first walk-forward test year
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -393,10 +394,14 @@ def _predict_positions(model: DMN,
 
 
 def run_walk_forward(feat: pd.DataFrame,
-                     feature_cols: list[str] | None = None,
-                     seq_len:  int  = SEQ_LEN,
-                     verbose:  bool = True) -> tuple[pd.DataFrame, pd.DataFrame]:
+                     feature_cols:     list[str] | None = None,
+                     seq_len:          int  = SEQ_LEN,
+                     max_train_seq:    int  = MAX_TRAIN_SEQ,
+                     verbose:          bool = True) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Full walk-forward training and prediction.
+
+    Training sequences are capped at max_train_seq per fold (random subsample,
+    reproducible via fold-specific seed). Full universe of tickers is preserved.
 
     Returns:
         positions    : (date, ticker, position) — out-of-sample only
@@ -409,7 +414,7 @@ def run_walk_forward(feat: pd.DataFrame,
     splits     = walk_forward_splits(feat)
     all_pos, fold_rows = [], []
 
-    for sp in splits:
+    for fold_idx, sp in enumerate(splits):
         ty = sp["test_year"]
         t0 = time.perf_counter()
 
@@ -420,7 +425,18 @@ def run_walk_forward(feat: pd.DataFrame,
                 print(f"  fold {ty} — too few training samples, skipped")
             continue
 
-        model, history = train_fold(X_tr, y_tr, n_features=n_features)
+        # Subsample for CPU feasibility — reproducible, full universe preserved
+        n_total = len(X_tr)
+        if n_total > max_train_seq:
+            rng    = np.random.default_rng(RANDOM_SEED + fold_idx)
+            idx    = rng.choice(n_total, size=max_train_seq, replace=False)
+            idx.sort()          # preserve temporal order within sample
+            X_tr, y_tr = X_tr[idx], y_tr[idx]
+            if verbose:
+                print(f"  fold {ty} — subsampled {max_train_seq:,} / {n_total:,} sequences")
+
+        model, history = train_fold(X_tr, y_tr, n_features=n_features,
+                                    seed=RANDOM_SEED + fold_idx)
         elapsed        = time.perf_counter() - t0
 
         pos_df = _predict_positions(model, feat, sp, feature_cols, seq_len)
@@ -433,6 +449,7 @@ def run_walk_forward(feat: pd.DataFrame,
             "val_sharpe_best": round(best_sharpe, 3),
             "epochs":          len(history),
             "n_train_seq":     len(X_tr),
+            "n_total_seq":     n_total,
             "seconds":         round(elapsed, 1),
         })
         if verbose:
