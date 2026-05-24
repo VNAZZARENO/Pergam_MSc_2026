@@ -139,8 +139,8 @@ def build_portfolio(positions: pd.DataFrame) -> pd.DataFrame:
         .agg(
             net_return=("strategy_return",         "sum"),   # Σ w_i*r_i - Σ TC_i
             gross_return=("gross_strategy_return", "sum"),   # Σ w_i*r_i
+            total_cost=("transaction_cost",        "sum"),   # Σ TC_i  (portfolio-level daily cost)
             mean_turnover=("turnover",             "mean"),
-            mean_cost=("transaction_cost",         "mean"),
             n_stocks=("ticker",                    "nunique"),
             mean_position=("position",             "mean"),
         )
@@ -189,7 +189,10 @@ def add_benchmark(portfolio: pd.DataFrame, benchmark_ew: pd.DataFrame) -> pd.Dat
 # Metrics
 # ---------------------------------------------------------------------------
 
-def _metrics(returns: pd.Series, turnover: pd.Series | None = None, eps: float = 1e-8) -> dict:
+def _metrics(returns: pd.Series,
+             mean_turnover: pd.Series | None = None,
+             total_cost: pd.Series | None = None,
+             eps: float = 1e-8) -> dict:
     r = returns.dropna()
     if len(r) < 20:
         return {}
@@ -216,18 +219,24 @@ def _metrics(returns: pd.Series, turnover: pd.Series | None = None, eps: float =
         "win_rate":     round(win_rate, 3),
         "n_days":       len(r),
     }
-    if turnover is not None:
-        out["mean_daily_turnover"] = round(float(turnover.dropna().mean()), 4)
-        out["ann_cost_bps"] = round(float(turnover.dropna().mean() * TRANSACTION_COST_BPS * 252), 1)
+    if mean_turnover is not None:
+        out["mean_daily_turnover"] = round(float(mean_turnover.dropna().mean()), 4)
+    if total_cost is not None:
+        # ann_cost_bps at portfolio level: mean(Σ_i TC_i per day) × 252 × 10000
+        out["ann_cost_bps"] = round(float(total_cost.dropna().mean() * 252 * 10_000), 1)
     return out
 
 
 def compute_metrics_table(portfolio: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for variant, grp in portfolio.groupby("variant"):
-        ret_col = "net_return" if variant not in ("EW", "SXXR") else "net_return"
-        to_col  = "mean_turnover" if "mean_turnover" in grp.columns else None
-        m = _metrics(grp[ret_col], grp[to_col] if to_col else None)
+        to_col   = "mean_turnover" if "mean_turnover" in grp.columns else None
+        cost_col = "total_cost"    if "total_cost"    in grp.columns else None
+        m = _metrics(
+            grp["net_return"],
+            mean_turnover=grp[to_col]   if to_col   else None,
+            total_cost=grp[cost_col] if cost_col else None,
+        )
         m["variant"] = variant
         rows.append(m)
     cols = ["variant", "sharpe", "sortino", "ann_return", "ann_vol",
