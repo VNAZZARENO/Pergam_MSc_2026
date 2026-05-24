@@ -1,6 +1,6 @@
 """NB04 helpers: portfolio-level backtest of DMN variants.
 
-Inputs : dmn_positions.parquet (NB03) + benchmark_ew.parquet (NB01)
+Inputs : positions.parquet (NB03) + panel.parquet + benchmark_ew.parquet (NB01)
 Outputs: backtest_portfolio.parquet, backtest_metrics.parquet
 
 All metrics are out-of-sample (walk-forward test periods only).
@@ -52,9 +52,10 @@ BENCHMARK_COLORS = {
 def nb04_paths(root: Path) -> dict[str, Path]:
     proc = root / "data" / "processed" / "stoxx600"
     return {
-        "dmn_positions":   proc / "dmn_positions.parquet",
-        "benchmark_ew":    proc / "benchmark_ew.parquet",
-        "known_events":    proc / "known_events.csv",
+        "positions":          proc / "positions.parquet",
+        "panel":              proc / "panel.parquet",
+        "benchmark_ew":       proc / "benchmark_ew.parquet",
+        "known_events":       proc / "known_events.csv",
         "backtest_portfolio": proc / "backtest_portfolio.parquet",
         "backtest_metrics":   proc / "backtest_metrics.parquet",
     }
@@ -62,21 +63,29 @@ def nb04_paths(root: Path) -> dict[str, Path]:
 
 def load_nb04_inputs(root: Path) -> dict:
     paths = nb04_paths(root)
-    missing = [p for p in [paths["dmn_positions"], paths["benchmark_ew"]] if not p.exists()]
+    missing = [k for k in ("positions", "panel", "benchmark_ew") if not paths[k].exists()]
     if missing:
-        raise FileNotFoundError(f"Missing NB03/NB01 outputs: {[str(p) for p in missing]}")
+        raise FileNotFoundError(f"Missing NB01/NB03 outputs: {[str(paths[k]) for k in missing]}")
 
-    positions = pd.read_parquet(paths["dmn_positions"])
+    positions    = pd.read_parquet(paths["positions"])
     benchmark_ew = pd.read_parquet(paths["benchmark_ew"])
+    panel_ret    = pd.read_parquet(paths["panel"], columns=["date", "ticker", "next_return"])
     known_events = (pd.read_csv(paths["known_events"], parse_dates=["event_date"])
                     if paths["known_events"].exists()
                     else pd.DataFrame(columns=["event", "event_date"]))
 
-    for df in [positions, benchmark_ew, known_events]:
-        if "date" in df.columns:
-            df["date"] = pd.to_datetime(df["date"])
-        if "event_date" in df.columns:
-            df["event_date"] = pd.to_datetime(df["event_date"])
+    for df in [positions, benchmark_ew, panel_ret]:
+        df["date"] = pd.to_datetime(df["date"])
+    if not known_events.empty:
+        known_events["event_date"] = pd.to_datetime(known_events["event_date"])
+
+    # Attach realized returns and ensure variant label
+    positions = positions.merge(
+        panel_ret.rename(columns={"next_return": "target_return"}),
+        on=["date", "ticker"], how="left",
+    )
+    if "variant" not in positions.columns:
+        positions["variant"] = "baseline"
 
     return {"paths": paths, "positions": positions,
             "benchmark_ew": benchmark_ew, "known_events": known_events}
