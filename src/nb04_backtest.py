@@ -96,12 +96,23 @@ def load_nb04_inputs(root: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 def build_portfolio(positions: pd.DataFrame) -> pd.DataFrame:
-    """Aggregate stock-level positions to equal-weight portfolio returns per (date, variant)."""
+    """Aggregate stock-level positions into a fully-invested long-only portfolio.
+
+    DMN positions ∈ [0, 1] are treated as allocation scores and normalised to
+    sum to 1 per (date, variant), so the portfolio is always 100% invested and
+    directly comparable to SXXR / EW benchmarks.
+    """
     positions = positions.copy().sort_values(["variant", "ticker", "date"]).reset_index(drop=True)
 
+    # Normalise raw positions → portfolio weights summing to 1 per day
+    pos_sum = (positions.groupby(["date", "variant"])["position"]
+               .transform("sum").clip(lower=1e-8))
+    positions["weight"] = positions["position"] / pos_sum
+
+    # Turnover on normalised weights (comparable to standard portfolio turnover)
     if "turnover" not in positions.columns:
-        previous = positions.groupby(["variant", "ticker"], sort=False)["position"].shift(1).fillna(0.0)
-        positions["turnover"] = (positions["position"] - previous).abs()
+        previous = positions.groupby(["variant", "ticker"], sort=False)["weight"].shift(1).fillna(0.0)
+        positions["turnover"] = (positions["weight"] - previous).abs()
 
     if "transaction_cost" not in positions.columns:
         positions["transaction_cost"] = TRANSACTION_COST_RATE * positions["turnover"]
@@ -112,7 +123,7 @@ def build_portfolio(positions: pd.DataFrame) -> pd.DataFrame:
             None,
         )
         if target_col is not None:
-            positions["gross_strategy_return"] = positions["position"] * positions[target_col]
+            positions["gross_strategy_return"] = positions["weight"] * positions[target_col]
         elif "strategy_return" in positions.columns:
             positions["gross_strategy_return"] = positions["strategy_return"]
         else:
