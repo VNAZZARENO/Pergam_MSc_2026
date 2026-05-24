@@ -137,12 +137,12 @@ def build_portfolio(positions: pd.DataFrame) -> pd.DataFrame:
     portfolio = (
         positions.groupby(["date", "variant"])
         .agg(
-            net_return=("strategy_return",       "mean"),
-            gross_return=("gross_strategy_return", "mean"),
-            mean_turnover=("turnover",            "mean"),
-            mean_cost=("transaction_cost",        "mean"),
-            n_stocks=("ticker",                   "nunique"),
-            mean_position=("position",            "mean"),
+            net_return=("strategy_return",         "sum"),   # Σ w_i*r_i - Σ TC_i
+            gross_return=("gross_strategy_return", "sum"),   # Σ w_i*r_i
+            mean_turnover=("turnover",             "mean"),
+            mean_cost=("transaction_cost",         "mean"),
+            n_stocks=("ticker",                    "nunique"),
+            mean_position=("position",             "mean"),
         )
         .reset_index()
         .sort_values(["variant", "date"])
