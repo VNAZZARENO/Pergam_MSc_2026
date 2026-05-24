@@ -290,6 +290,14 @@ def _metadata_table(tickers: list[str]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _stack_wide(frame: pd.DataFrame) -> pd.Series:
+    """Stack a wide date x ticker frame across pandas versions."""
+    try:
+        return frame.stack(future_stack=True)
+    except TypeError:
+        return frame.stack(dropna=False)
+
+
 def build_panel(price_filled: pd.DataFrame,
                 returns:      dict,
                 norm_returns: dict,
@@ -310,7 +318,7 @@ def build_panel(price_filled: pd.DataFrame,
     frames.update(macd)
 
     # Stack each wide frame → Series indexed by (date, ticker)
-    stacked = {name: wide.stack(dropna=False) for name, wide in frames.items()}
+    stacked = {name: _stack_wide(wide) for name, wide in frames.items()}
     panel   = pd.DataFrame(stacked)
     panel.index.names = ["date", "ticker"]
     panel = panel.reset_index()

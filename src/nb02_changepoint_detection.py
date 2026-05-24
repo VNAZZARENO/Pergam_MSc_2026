@@ -479,10 +479,11 @@ def build_nb03_features(cpd_scores: pd.DataFrame) -> pd.DataFrame:
     if not parts:
         return pd.DataFrame()
 
-    wide = parts[0]
-    for df in parts[1:]:
-        wide = wide.merge(df, on=["date", "ticker"], how="outer")
-
+    long_features = pd.concat(parts, ignore_index=True, sort=False)
+    feature_cols = [c for c in long_features.columns if c not in ("date", "ticker")]
+    wide = (long_features
+            .groupby(["date", "ticker"], as_index=False, observed=True)[feature_cols]
+            .first())
     return wide.sort_values(["date", "ticker"]).reset_index(drop=True)
 
 

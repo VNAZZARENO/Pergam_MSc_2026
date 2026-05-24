@@ -22,6 +22,10 @@ documentation/html_exports/
 notebooks/*.html
 notebooks/*_presentable.ipynb
 
+# Personal notes and local documents (not for sharing)
+notes/
+documents/
+
 # LaTeX and document build artifacts
 *.aux
 *.fdb_latexmk
