@@ -6,6 +6,7 @@ pyyaml
 matplotlib
 plotly>=5.0
 scipy
+arch
 torch>=2.0
 jupyter
 nbconvert

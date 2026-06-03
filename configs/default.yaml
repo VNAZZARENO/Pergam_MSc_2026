@@ -1,19 +1,74 @@
-# Default configuration for the clean 01/02/03 pipeline.
-# Paths are resolved from the notebooks directory.
+# Data paths
+data:
+  processed_dir: data/processed/stoxx600
+  processed_cpd: data/processed/cpd
+  processed_mod: data/processed/models
+  raw_bloomberg: data/raw/stoxx600/SXXR.xlsx
 
-project:
-  universe: "STOXX Europe 600"
-  frequency: "daily"
+# Universe
+assets: []
 
-paths:
-  excel_2025_2026: "../data/raw/stoxx600/SXXR.xlsx"
-  output_dir: "../data/processed/stoxx600"
+# Data range
+start_year: 2006
+end_year: 2026
+csv_last_year: 2024       # CSVs cover up to this year; xlsx takes over after
 
-nb03:
-  first_test_year: 2019
-  last_test_year: 2026
-  transaction_cost_bps: 25
-  variants:
-    - baseline
-    - cpd_cusum
-    - cpd_gp
+# Return horizons (per-ticker rolling windows)
+# Each entry: [lag_in_days, label]. Used for arithmetic and log returns.
+return_horizons:
+  - [1,   "1d"]
+  - [21,  "21d"]
+  - [63,  "63d"]
+  - [126, "126d"]
+  - [252, "252d"]
+
+# Realised volatility windows (annualized, from 1d arithmetic returns)
+# 1d is deliberately omitted: rolling std with window=1 is undefined.
+vol_windows:
+  - [21,  "21d"]
+  - [63,  "63d"]
+  - [126, "126d"]
+  - [252, "252d"]
+
+# Portfolio / signal
+vol_target: 0.15   # paper Eq. 11; reused as DMN target_vol
+
+# MACD pairs (short span, long span) -- Baz et al. (2015)
+macd_pairs:
+  - [8,  24]
+  - [16, 48]
+  - [32, 96]
+
+# Deep Momentum Network
+dmn:
+  cpd_lbw:    21       # CPD lookback window (paper sweeps {10, 21, 63, 126, 252})
+  cpd_stride:  5       # stride for precomputing CPD; 1 = paper-exact, 5 = fast
+  seq_len:    63       # LSTM sequence length (paper Appendix B)
+  hidden:     20       # LSTM hidden state size
+  dropout:    0.3
+  batch:      128      # batch size
+  lr:         0.001
+  epochs:     100      # max epochs
+  patience:   25       # early-stopping patience on val Sharpe
+  seed:        1
+  long_only: false             # true → positions in (0,1); false → (-1,1)
+  transaction_cost: 0.0        # 0.0 = no costs; 0.0025 = 25 bps
+
+# Walk-forward validation
+fold_type: expanding   # "expanding" or "rolling"
+
+folds_expanding:
+  - {train_start: "2006-01-01", train_end: "2010-12-31",
+     test_start:  "2011-01-01", test_end:  "2015-12-31"}
+  - {train_start: "2006-01-01", train_end: "2015-12-31",
+     test_start:  "2016-01-01", test_end:  "2020-12-31"}
+  - {train_start: "2006-01-01", train_end: "2020-12-31",
+     test_start:  "2021-01-01", test_end:  "2025-12-31"}
+
+folds_rolling:
+  - {train_start: "2006-01-01", train_end: "2016-12-31",
+     test_start:  "2017-01-01", test_end:  "2019-12-31"}
+  - {train_start: "2010-01-01", train_end: "2019-12-31",
+     test_start:  "2020-01-01", test_end:  "2022-12-31"}
+  - {train_start: "2013-01-01", train_end: "2022-12-31",
+     test_start:  "2023-01-01", test_end:  "2025-12-31"}
