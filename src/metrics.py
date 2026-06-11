@@ -1,4 +1,11 @@
-"""Risk-adjusted performance metrics for strategy evaluation."""
+"""Risk-adjusted performance metrics for strategy evaluation.
+
+Two compute_metrics variants are provided:
+    compute_metrics()         — programmatic dict, geometric compounding.
+                                Used by scripts and NB03.
+    compute_display_metrics() — display dict with pretty keys, arithmetic.
+                                Used by NB04 to build the performance table.
+"""
 
 from __future__ import annotations
 
@@ -83,3 +90,122 @@ def compute_metrics(
         "max_drawdown": max_drawdown(r),
         "hit_ratio":    hit_ratio(r),
     }
+
+
+# ---------------------------------------------------------------------------
+# Display metrics  (NB04 — pretty keys, arithmetic annualisation)
+# ---------------------------------------------------------------------------
+
+
+def compute_display_metrics(returns: pd.Series) -> dict:
+    """Performance metrics with display-friendly keys for NB04 tables.
+
+    Uses simple arithmetic annualisation (mean * 252) consistent with the
+    paper's Exhibit 3 presentation.  For programmatic use, prefer
+    ``compute_metrics()`` which uses geometric compounding.
+
+    Parameters
+    ----------
+    returns : daily return series.
+
+    Returns
+    -------
+    dict with keys: Returns, Vol, Sharpe, Downside Dev, Sortino,
+                    MDD, Calmar, % +ve, Avg P / Avg L.
+    """
+    _nan_keys = ["Returns", "Vol", "Sharpe", "Downside Dev", "Sortino",
+                 "MDD", "Calmar", "% +ve", "Avg P / Avg L"]
+    r = returns.dropna()
+    if len(r) < 2:
+        return {k: np.nan for k in _nan_keys}
+
+    ann_ret = r.mean() * 252
+    ann_vol = r.std() * np.sqrt(252)
+    sharpe_ = ann_ret / ann_vol if ann_vol > 0 else np.nan
+
+    downside = r[r < 0]
+    dd_dev   = downside.std() * np.sqrt(252) if len(downside) > 0 else np.nan
+    sortino_ = ann_ret / dd_dev if dd_dev and dd_dev > 0 else np.nan
+
+    cum    = (1 + r).cumprod()
+    dd     = (cum - cum.cummax()) / cum.cummax()
+    mdd    = dd.min()
+    calmar_= ann_ret / abs(mdd) if mdd != 0 else np.nan
+
+    pct_pos = float((r > 0).mean())
+    avg_p   = r[r > 0].mean() if (r > 0).any() else np.nan
+    avg_l   = abs(r[r < 0].mean()) if (r < 0).any() else np.nan
+    p_to_l  = avg_p / avg_l if avg_l and avg_l > 0 else np.nan
+
+    return {
+        "Returns":      ann_ret,
+        "Vol":          ann_vol,
+        "Sharpe":       sharpe_,
+        "Downside Dev": dd_dev,
+        "Sortino":      sortino_,
+        "MDD":          mdd,
+        "Calmar":       calmar_,
+        "% +ve":        pct_pos,
+        "Avg P / Avg L": p_to_l,
+    }
+
+
+def format_metrics(df: pd.DataFrame) -> pd.DataFrame:
+    """Pretty-print formatting for the NB04 metrics table.
+
+    Parameters
+    ----------
+    df : metrics DataFrame with display-friendly column names.
+
+    Returns
+    -------
+    DataFrame with values formatted as strings.
+    """
+    fmt = df.copy()
+    for col in ["Returns", "Vol", "Downside Dev", "MDD"]:
+        if col in fmt.columns:
+            fmt[col] = fmt[col].map(lambda x: f"{x:+.2%}" if pd.notna(x) else "—")
+    for col in ["Sharpe", "Sortino", "Calmar", "Avg P / Avg L"]:
+        if col in fmt.columns:
+            fmt[col] = fmt[col].map(lambda x: f"{x:+.3f}" if pd.notna(x) else "—")
+    if "% +ve" in fmt.columns:
+        fmt["% +ve"] = fmt["% +ve"].map(lambda x: f"{x:.1%}" if pd.notna(x) else "—")
+    return fmt
+
+
+# ---------------------------------------------------------------------------
+# Rolling and yearly Sharpe  (NB04 time-series diagnostics)
+# ---------------------------------------------------------------------------
+
+
+def rolling_sharpe(returns: pd.Series, window: int = 252) -> pd.Series:
+    """Trailing ``window``-day annualised Sharpe ratio.
+
+    Parameters
+    ----------
+    returns : daily return series.
+    window  : rolling window in trading days (default 252 = 1 year).
+
+    Returns
+    -------
+    pd.Series of rolling Sharpe values.
+    """
+    r = returns.dropna()
+    return (r.rolling(window).mean() / r.rolling(window).std()) * np.sqrt(252)
+
+
+def yearly_sharpe(returns: pd.Series) -> pd.Series:
+    """Annualised Sharpe ratio broken down by calendar year.
+
+    Parameters
+    ----------
+    returns : daily return series with a DatetimeIndex.
+
+    Returns
+    -------
+    pd.Series indexed by year (int).
+    """
+    r = returns.dropna()
+    return r.groupby(r.index.year).apply(
+        lambda y: float((y.mean() / y.std()) * np.sqrt(252)) if y.std() > 0 else 0.0
+    )

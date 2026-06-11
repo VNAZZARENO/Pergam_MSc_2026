@@ -26,6 +26,12 @@ notebooks/*_presentable.ipynb
 notes/
 documents/
 
+make_rapport_notebooks.py
+
+# Fichiers temporaires Codex/Jupyter (chemins Windows encodés)
+C：*.json
+C：*.txt
+
 # LaTeX and document build artifacts
 *.aux
 *.fdb_latexmk

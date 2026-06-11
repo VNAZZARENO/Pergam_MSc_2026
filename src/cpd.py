@@ -1,11 +1,16 @@
-"""Changepoint detection via Gaussian Processes.
+"""Changepoint detection methods for the STOXX 600 DMN pipeline.
 
-Implements the Matern 3/2 kernel fit and the changepoint kernel from
-Wood, Roberts & Zohren (2022), "Slow Momentum with Fast Reversion".
+Methods 1-4 (Edoardo): replicate Wood, Roberts & Zohren (2022).
+Methods 5-6 (Justine): online alternatives that complement NB03-V2 (LightGBM).
 
-All GP computations use scipy and numpy only -- no GPflow / TensorFlow.
+All methods produce two continuous scores per (ticker, date):
+    nu    in [0, 1] — severity   (1 = strong changepoint signal)
+    gamma in [0, 1] — location   (1 = changepoint near the present)
 
-Reference equations from the paper:
+Only *online* methods are used as model features to avoid look-ahead bias.
+Binary Segmentation is offline (upper-bound reference only, not a feature).
+
+Reference equations (GP method):
     Eq. 4  -- Matern 3/2 kernel
     Eq. 7  -- Negative log marginal likelihood (NLML)
     Eq. 9  -- Sigmoid-blended changepoint kernel
@@ -15,6 +20,7 @@ Reference equations from the paper:
 from __future__ import annotations
 
 import numpy as np
+from scipy import stats as scipy_stats
 from scipy.optimize import minimize
 from scipy.special import logsumexp
 import ruptures as rpt
@@ -499,3 +505,131 @@ def bocpd(
                 dets.append(t); last = t
 
     return dets, map_rl, score
+
+
+# ---------------------------------------------------------------------------
+# Adaptive CUSUM  (online — Justine, NB02 Method 5)
+# ---------------------------------------------------------------------------
+
+
+def adaptive_cusum(
+    returns: np.ndarray,
+    window_vol: int = 21,
+    k: float = 0.5,
+    h: float = 4.0,
+    cooldown: int = 20,
+    stride: int = 1,
+) -> tuple[list[int], np.ndarray, np.ndarray]:
+    """Online CPD via CUSUM with local volatility normalisation.
+
+    Extends Edoardo's ``cusum_combined`` by standardising each return by its
+    local volatility (rolling std over ``window_vol`` days) before comparing
+    to the threshold.  This makes the threshold *regime-invariant*: fewer
+    false alarms during turbulent markets (relevant at Pergam's 25 bps cost).
+
+    Parameters
+    ----------
+    returns : (n,) array of returns.
+    window_vol : rolling window for local vol estimate (days).
+    k : CUSUM slack / allowance (in z-score units).
+    h : detection threshold (in z-score units).
+    cooldown : minimum observations between consecutive detections.
+    stride : step between score updates (stride>1 = faster, slightly less precise).
+
+    Returns
+    -------
+    detections : list of detection indices.
+    nu_arr : (n,) float array in [0, 1] — tanh(stat/h), current signal strength.
+    gamma_arr : (n,) float array in [0, 1] — time since last reset / window_vol.
+    """
+    n = len(returns)
+    nu_arr    = np.zeros(n)
+    gamma_arr = np.zeros(n)
+    S_pos, S_neg = 0.0, 0.0
+    last_reset, last_det = 0, -cooldown - 1
+    detections = []
+
+    for t in range(window_vol, n):
+        local_vol = np.std(returns[max(0, t - window_vol): t]) + 1e-10
+        z = returns[t] / local_vol
+
+        S_pos = max(0.0, S_pos + z - k)
+        S_neg = max(0.0, S_neg - z - k)
+        stat  = max(S_pos, S_neg)
+
+        if stride == 1 or (t % stride) == 0:
+            nu_arr[t]    = float(np.tanh(stat / h))
+            gamma_arr[t] = min(float(t - last_reset) / window_vol, 1.0)
+
+            if stat > h and (t - last_det) > cooldown:
+                detections.append(t)
+                last_det     = t
+                S_pos, S_neg = 0.0, 0.0
+                last_reset   = t
+
+    return detections, nu_arr, gamma_arr
+
+
+# ---------------------------------------------------------------------------
+# Rolling t-test  (online — Justine, NB02 Method 6)
+# ---------------------------------------------------------------------------
+
+
+def rolling_ttest(
+    returns: np.ndarray,
+    window: int = 21,
+    cooldown: int = 20,
+    stride: int = 1,
+) -> tuple[list[int], np.ndarray, np.ndarray]:
+    """Online CPD via rolling Welch t-test on mean shifts.
+
+    Slides a window of ``window`` days and finds the split point that
+    maximises |t-statistic|.  Analogous to the GP Matérn approach but uses
+    a classical statistic instead of a likelihood ratio — faster and
+    interpretable.
+
+    Parameters
+    ----------
+    returns : (n,) array of returns.
+    window : rolling window length (days).
+    cooldown : minimum observations between consecutive detections.
+    stride : step between score updates.
+
+    Returns
+    -------
+    detections : list of detection indices.
+    nu_arr : (n,) float array in [0, 1] — 1 − p_value at the best split.
+    gamma_arr : (n,) float array in [0, 1] — best split position / window.
+    """
+    n = len(returns)
+    nu_arr    = np.zeros(n)
+    gamma_arr = np.full(n, 0.5)
+    detections = []
+    last_det   = -cooldown - 1
+
+    for t in range(window, n):
+        if stride > 1 and (t % stride) != 0:
+            continue
+        win = returns[t - window: t]
+
+        best_stat, best_split = 0.0, window // 2
+        for split in range(max(3, window // 4),
+                           min(window - 3, 3 * window // 4 + 1)):
+            first, second = win[:split], win[split:]
+            if len(first) < 3 or len(second) < 3:
+                continue
+            t_stat, _ = scipy_stats.ttest_ind(first, second, equal_var=False)
+            if abs(t_stat) > abs(best_stat):
+                best_stat, best_split = t_stat, split
+
+        first, second = win[:best_split], win[best_split:]
+        if len(first) >= 3 and len(second) >= 3:
+            _, p_val       = scipy_stats.ttest_ind(first, second, equal_var=False)
+            nu_arr[t]      = float(np.clip(1.0 - p_val, 0.0, 1.0))
+            gamma_arr[t]   = best_split / window
+
+        if nu_arr[t] > 0.90 and (t - last_det) > cooldown:
+            detections.append(t)
+            last_det = t
+
+    return detections, nu_arr, gamma_arr
