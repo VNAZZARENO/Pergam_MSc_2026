@@ -17,15 +17,18 @@ Transaction cost problem and solutions:
     on validation. TC managed by EMA.
 
 Architecture:
-  21 features -> LightGBM (MSE on next_return 1d)
+  22 features -> LightGBM (MSE on next_return 1d)
               -> raw score -> sigmoid(alpha* x score) -> position in (0, 1)
               -> EMA smoothing (halflife=10d) -> positions_v2.parquet
 
-Features (21 total):
+Features (22 total):
   - 18 momentum : norm_ret + macd + ewma_vol, current + lag-1  (NB01)
   - 2  region-rel: region_rel_1d current + lag-1               (NB01)
-  - 1  CPD lag-1 : nu_cusum (CUSUM mean+variance, best AUC=0.605) (NB02)
+  - 1  CPD stock CUSUM lag-1  : nu_cusum_lag1 (AUC=0.605)      (NB02)
+  - 1  CPD stock BOCPD lag-1  : nu_bocpd_lag1 (corr CUSUM=0.11)(NB02)
     Note: only online (causal) CPD methods are used to avoid look-ahead bias.
+    Sector-level CPD was tested but removed: sector_coverage.csv covers only
+    44% of panel tickers (581/1312) — the feature was confounded with missing data.
 
 Walk-forward: expanding-window protocol, 8 annual folds (2019 -> 2026).
 Output format identical to V1 -> NB04 runs without modification.
@@ -65,10 +68,11 @@ SECTOR_FEATURES = ["region_rel_1d", "region_rel_1d_lag1"]
 # CUSUM (mean + variance) retenu : meilleur AUC (0.605) et recall (78.7%)
 # parmi toutes les methodes online sur le panel STOXX 600 (NB02).
 CPD_FEATURES = [
-    "nu_cusum_lag1",  # CUSUM tanh-normalise, best AUC parmi methodes online
+    "nu_cusum_lag1",  # CUSUM stock-level, best AUC (0.605), recall 78.7%
+    "nu_bocpd_lag1",  # BOCPD stock-level, P(run_length<=5), corr CUSUM=0.11
 ]
 
-FEATURE_COLS = MOMENTUM_FEATURES + SECTOR_FEATURES + CPD_FEATURES  # 21 features
+FEATURE_COLS = MOMENTUM_FEATURES + SECTOR_FEATURES + CPD_FEATURES  # 22 features
 TARGET_COL        = "next_return"
 TC_BPS            = 25    # couts de transaction Pergam (aller-retour)
 RANDOM_SEED       = 42
@@ -130,7 +134,7 @@ def nb03_paths(root=None) -> dict[str, Path]:
 # ---------------------------------------------------------------------------
 
 def load_nb03_inputs(root=None) -> dict:
-    """Charge le panel NB01 et les scores CPD NB02."""
+    """Charge le panel NB01 et les scores CPD NB02 (CUSUM + BOCPD)."""
     paths = nb03_paths(root)
     for key in ("panel", "cpd_features"):
         if not paths[key].exists():
@@ -256,6 +260,8 @@ def calibrate_alpha(pred_returns: np.ndarray, y_val: np.ndarray,
 
     La plage 1 -> alpha_max est adaptee aux predictions journalieres (~0.001 a 0.01).
     Avec calibration nette, le TC penalise les alpha eleves qui generent trop de turnover.
+    alpha_max=200 : cap original, laisse la calibration amplifier les signaux
+    faibles quand le Sharpe net validation le justifie.
     """
     if alphas is None:
         alphas = np.logspace(0, np.log10(alpha_max), 30)
@@ -304,8 +310,8 @@ def train_fold_lgb(X_train: np.ndarray, y_train: np.ndarray,
     """Entraine un LightGBM (MSE) et calibre alpha sur validation.
 
     Args:
-        X_train, y_train : donnees d'entrainement (features, next_return)
-        X_val, y_val     : donnees de validation
+        X_train, y_train : donnees d'entrainement (features, next_return 1j)
+        X_val, y_val     : donnees de validation (next_return 1j — calibration TC correcte)
         seed             : graine aleatoire pour la reproductibilite
         vl_dates, vl_tickers : si fournis, calibration alpha sur Sharpe NET
                                apres EMA + TC (sinon Sharpe brut)
@@ -410,10 +416,10 @@ def run_walk_forward(feat: pd.DataFrame,
         tr_feat = feat.loc[mask].sort_values(["date", "ticker"])
 
         X_all = tr_feat[feature_cols].fillna(0.0).to_numpy(dtype=np.float64)
-        y_all = tr_feat[TARGET_COL].to_numpy(dtype=np.float64)
 
         n_val       = max(1_000, int(len(tr_feat) * VAL_FRAC))
         X_tr, X_vl  = X_all[:-n_val], X_all[-n_val:]
+        y_all = tr_feat[TARGET_COL].to_numpy(dtype=np.float64)
         y_tr, y_vl  = y_all[:-n_val], y_all[-n_val:]
 
         if len(X_tr) < 500:
