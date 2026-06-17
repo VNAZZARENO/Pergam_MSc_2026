@@ -4,6 +4,7 @@ data:
   processed_cpd: data/processed/cpd
   processed_mod: data/processed/models
   raw_bloomberg: data/raw/stoxx600/SXXR.xlsx
+  max_ffill_days: 5        # forward-fill max sur les prix manquants (suspensions < 5j)
 
 # Data range
 start_year: 2006
@@ -81,6 +82,9 @@ lgbm:
   colsample_bytree:  0.8
   reg_alpha:         0.1
   reg_lambda:        0.1
-  position_halflife:  10   # EMA halflife for position smoothing (trading days)
-  alpha_max:         200   # cap on sigmoid calibration grid — prevents binary positions
-  window_years: null       # null = expanding window (all history)
+  position_halflife:  10   # demi-vie EMA pour le lissage des positions (jours ouvrés)
+  alpha_max:         200   # cap de la grille de calibration sigmoid (évite les positions binaires)
+  val_frac:         0.10   # fraction chronologique réservée à la validation interne par fold
+  window_years: null       # null = expanding window (tout l'historique disponible)
+
+# (max_ffill_days est dans le bloc data: ci-dessus)

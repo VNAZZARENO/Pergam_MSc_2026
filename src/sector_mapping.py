@@ -1,12 +1,6 @@
-#
-# GICS sector lookup for the STOXX 600 universe.
-# Import with:
-#     from src.sector_mapping import SECTOR_MAP, get_sector
-#
-# The full 11-sector GICS classification is used.
-# Tickers use Bloomberg format: "TICKER EXCHANGE" (e.g. "ASML NA").
+# Classification GICS 11 secteurs — STOXX 600, format Bloomberg "TICKER EXCHANGE"
 
-SECTOR_MAP: dict[str, str] = {
+SECTOR_MAP = {
 
     "TTE FP":    "Energy",
     "ENI IM":    "Energy",
@@ -890,6 +884,5 @@ SECTOR_MAP: dict[str, str] = {
 }
 
 
-def get_sector(ticker: str) -> str:
-    """Return the GICS sector for a Bloomberg ticker, or 'Unknown'."""
+def get_sector(ticker):
     return SECTOR_MAP.get(ticker.strip(), "Unknown")

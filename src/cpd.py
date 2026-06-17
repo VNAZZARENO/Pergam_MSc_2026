@@ -1,51 +1,16 @@
-"""Changepoint detection methods for the STOXX 600 DMN pipeline.
-
-Methods 1-4 (Edoardo): replicate Wood, Roberts & Zohren (2022).
-Methods 5-6 (Justine): online alternatives that complement NB03-V2 (LightGBM).
-
-All methods produce two continuous scores per (ticker, date):
-    nu    in [0, 1] — severity   (1 = strong changepoint signal)
-    gamma in [0, 1] — location   (1 = changepoint near the present)
-
-Only *online* methods are used as model features to avoid look-ahead bias.
-Binary Segmentation is offline (upper-bound reference only, not a feature).
-
-Reference equations (GP method):
-    Eq. 4  -- Matern 3/2 kernel
-    Eq. 7  -- Negative log marginal likelihood (NLML)
-    Eq. 9  -- Sigmoid-blended changepoint kernel
-    Eq. 10 -- Severity (nu) and location (gamma)
-"""
-
-from __future__ import annotations
+# Méthodes de détection de rupture (CPD) — pipeline STOXX 600
+# Toutes les méthodes online produisent : nu ∈ [0,1] (sévérité) et gamma ∈ [0,1] (localisation)
 
 import numpy as np
-from scipy import stats as scipy_stats
 from scipy.optimize import minimize
 from scipy.special import logsumexp
 import ruptures as rpt
 
-# ---------------------------------------------------------------------------
-# Kernel functions
-# ---------------------------------------------------------------------------
+
+# --- noyaux GP ---
 
 
-def _matern32_kernel(X: np.ndarray, sigma_f: float, lengthscale: float) -> np.ndarray:
-    """Matern 3/2 covariance matrix.  (Paper Eq. 4)
-
-    k(x, x') = sigma_f^2 * (1 + sqrt(3)*|x - x'| / l)
-                          * exp(-sqrt(3)*|x - x'| / l)
-
-    Parameters
-    ----------
-    X : (n,) array of input locations (time indices).
-    sigma_f : output-scale standard deviation.
-    lengthscale : length-scale lambda.
-
-    Returns
-    -------
-    K : (n, n) covariance matrix.
-    """
+def _matern32_kernel(X, sigma_f, lengthscale):
     dist = np.abs(X[:, None] - X[None, :])
     lengthscale = max(lengthscale, 1e-10)
     r = np.sqrt(3.0) * dist / lengthscale
@@ -54,90 +19,46 @@ def _matern32_kernel(X: np.ndarray, sigma_f: float, lengthscale: float) -> np.nd
     return K
 
 
-def _sigmoid(x: np.ndarray, c: float, s: float) -> np.ndarray:
-    """Logistic sigmoid used for the changepoint blend.
-
-    sigma(x) = 1 / (1 + exp(-s * (x - c)))
-
-    where c is the changepoint location and s > 0 is the steepness.
-    (Paper: sigma(x) = 1/(1 + e^{-s(x-c)}), see text below Eq. 8.)
-    """
+def _sigmoid(x, c, s):
     z = np.asarray(s * (x - c), dtype=np.float64)
     z_clamped = np.clip(z, -500.0, 500.0)
     return 1.0 / (1.0 + np.exp(-z_clamped))
 
 
-def _changepoint_kernel(
-    X: np.ndarray,
-    sigma_f1: float, l1: float,
-    sigma_f2: float, l2: float,
-    c: float, s: float,
-) -> np.ndarray:
-    """Changepoint kernel.  (Paper Eq. 9)
-
-    k_cp(x, x') = k_{s1}(x, x') * sig(x) * sig(x')
-                 + k_{s2}(x, x') * sig_bar(x) * sig_bar(x')
-
-    where sig_bar(x) = 1 - sig(x).
-    """
+def _changepoint_kernel(X, sigma_f1, l1, sigma_f2, l2, c, s):
+    # noyau CP = k1*sig*sig + k2*(1-sig)*(1-sig)  (éq. 9)
     K1 = _matern32_kernel(X, sigma_f1, l1)
     K2 = _matern32_kernel(X, sigma_f2, l2)
-
     sig = _sigmoid(X, c, s)
     sig_bar = 1.0 - sig
-
     S = sig[:, None] * sig[None, :]
     S_bar = sig_bar[:, None] * sig_bar[None, :]
-
     return K1 * S + K2 * S_bar
 
 
-# ---------------------------------------------------------------------------
-# Negative log marginal likelihood
-# ---------------------------------------------------------------------------
+# --- vraisemblance marginale ---
 
 
-def _nlml(K: np.ndarray, y: np.ndarray, sigma_n: float) -> float:
-    """Negative log marginal likelihood of a GP.  (Paper Eq. 7)
-
-    nlml = 0.5 * y^T V^{-1} y  +  0.5 * log|V|  +  n/2 * log(2*pi)
-
-    where  V = K + sigma_n^2 * I.  Uses Cholesky for numerical stability.
-    """
+def _nlml(K, y, sigma_n):
+    # log-vraisemblance marginale négative d'un GP  (éq. 7)
     n = len(y)
     V = K + sigma_n ** 2 * np.eye(n)
-    V += 1e-6 * np.eye(n)  # jitter for Cholesky stability
-
+    V += 1e-6 * np.eye(n)  # jitter pour la stabilité de Cholesky
     try:
         L = np.linalg.cholesky(V)
     except np.linalg.LinAlgError:
         return 1e10
-
     alpha = np.linalg.solve(L.T, np.linalg.solve(L, y))
     data_fit  = 0.5 * y @ alpha
     complexity = np.sum(np.log(np.diag(L)))
     constant   = 0.5 * n * np.log(2.0 * np.pi)
-
     return data_fit + complexity + constant
 
 
-# ---------------------------------------------------------------------------
-# Fitting routines
-# ---------------------------------------------------------------------------
+# --- ajustement des hyperparamètres ---
 
 
-def _fit_base_matern(X: np.ndarray, y: np.ndarray) -> tuple[float, np.ndarray]:
-    """Fit a GP with a single Matern 3/2 kernel by minimizing NLML.
-
-    Hyperparameters: theta = [log(sigma_f), log(lengthscale), log(sigma_n)]
-    All initialized to 1 (log=0) as in the paper (page 9).
-
-    Returns
-    -------
-    best_nlml : minimized NLML.
-    best_params : [sigma_f, lengthscale, sigma_n] at the optimum.
-    """
-
+def _fit_base_matern(X, y):
     def objective(log_theta):
         sigma_f, lengthscale, sigma_n = np.exp(log_theta)
         K = _matern32_kernel(X, sigma_f, lengthscale)
@@ -145,206 +66,104 @@ def _fit_base_matern(X: np.ndarray, y: np.ndarray) -> tuple[float, np.ndarray]:
 
     log_theta0 = np.array([0.0, 0.0, 0.0])
     log_bounds = [(-10.0, 10.0)] * 3
-
-    result = minimize(
-        objective,
-        log_theta0,
-        method="L-BFGS-B",
-        bounds=log_bounds,
-        options={"maxiter": 200, "ftol": 1e-8},
-    )
-
+    result = minimize(objective, log_theta0, method="L-BFGS-B",
+                      bounds=log_bounds, options={"maxiter": 200, "ftol": 1e-8})
     return result.fun, np.exp(result.x)
 
 
-def _fit_changepoint(
-    X: np.ndarray,
-    y: np.ndarray,
-    base_params: np.ndarray,
-) -> tuple[float, np.ndarray]:
-    """Fit a GP with the changepoint kernel by minimizing NLML.
-
-    7 hyperparameters: [log(sf1), log(l1), log(sf2), log(l2), c, log(s), log(sn)]
-    Initialized with base Matern params (paper page 9):
-        c = (n-1)/2, s = 1, k_{s1} = k_{s2} = base Matern.
-
-    Returns
-    -------
-    best_nlml : minimized NLML.
-    best_params : [sigma_f1, l1, sigma_f2, l2, c, s, sigma_n] at optimum.
-    """
+def _fit_changepoint(X, y, base_params):
     n = len(y)
     sigma_f_base, l_base, sigma_n_base = base_params
 
     theta0 = np.array([
-        np.log(sigma_f_base),
-        np.log(l_base),
-        np.log(sigma_f_base),
-        np.log(l_base),
-        (n - 1) / 2.0,    # c = middle of window
-        np.log(1.0),       # s = 1
+        np.log(sigma_f_base), np.log(l_base),
+        np.log(sigma_f_base), np.log(l_base),
+        (n - 1) / 2.0,
+        np.log(1.0),
         np.log(sigma_n_base),
     ])
-
     bounds = [
-        (-10.0, 10.0),
-        (-10.0, 10.0),
-        (-10.0, 10.0),
-        (-10.0, 10.0),
-        (float(X[0] + 0.5), float(X[-1] - 0.5)),  # c stays inside window
-        (-10.0, 10.0),
-        (-10.0, 10.0),
+        (-10.0, 10.0), (-10.0, 10.0),
+        (-10.0, 10.0), (-10.0, 10.0),
+        (float(X[0] + 0.5), float(X[-1] - 0.5)),
+        (-10.0, 10.0), (-10.0, 10.0),
     ]
 
     def objective(theta):
-        sf1    = np.exp(theta[0]); l1  = np.exp(theta[1])
-        sf2    = np.exp(theta[2]); l2  = np.exp(theta[3])
-        c      = theta[4]
-        s      = np.exp(theta[5]); sn  = np.exp(theta[6])
+        sf1 = np.exp(theta[0]); l1  = np.exp(theta[1])
+        sf2 = np.exp(theta[2]); l2  = np.exp(theta[3])
+        c   = theta[4]
+        s   = np.exp(theta[5]); sn  = np.exp(theta[6])
         K = _changepoint_kernel(X, sf1, l1, sf2, l2, c, s)
         return _nlml(K, y, sn)
 
-    result = minimize(
-        objective,
-        theta0,
-        method="L-BFGS-B",
-        bounds=bounds,
-        options={"maxiter": 300, "ftol": 1e-8},
-    )
-
+    result = minimize(objective, theta0, method="L-BFGS-B",
+                      bounds=bounds, options={"maxiter": 300, "ftol": 1e-8})
     t = result.x
     best_params = np.array([
         np.exp(t[0]), np.exp(t[1]),
         np.exp(t[2]), np.exp(t[3]),
-        t[4],
-        np.exp(t[5]), np.exp(t[6]),
+        t[4], np.exp(t[5]), np.exp(t[6]),
     ])
-
     return result.fun, best_params
 
 
-def _fit_changepoint_with_retry(
-    X: np.ndarray,
-    y: np.ndarray,
-    base_params: np.ndarray,
-) -> tuple[float, np.ndarray]:
-    """Fit changepoint kernel, retrying with reset params if k_s1 == k_s2.
-
-    From the paper (page 9):
-        'In the rare case this process fails, we try again by reinitializing
-         all changepoint kernel parameters to 1, except c = t - l/2.'
-    """
+def _fit_changepoint_with_retry(X, y, base_params):
     nlml_cp, cp_params = _fit_changepoint(X, y, base_params)
-
     sf1, l1, sf2, l2 = cp_params[0], cp_params[1], cp_params[2], cp_params[3]
+    # si k_s1 ≈ k_s2 l'optimisation a échoué — on relance avec des params neutres
     if np.isclose(sf1, sf2, rtol=1e-3) and np.isclose(l1, l2, rtol=1e-3):
         retry_params = np.array([1.0, 1.0, 1.0])
         nlml_cp, cp_params = _fit_changepoint(X, y, retry_params)
-
     return nlml_cp, cp_params
 
 
-# ---------------------------------------------------------------------------
-# Public API -- GP changepoint scores
-# ---------------------------------------------------------------------------
+# --- API publique GP ---
 
 
-def cpd_scores(returns, lbw: int) -> tuple[float, float]:
-    """Return (severity, location) pair (nu, gamma) for a lookback window.
-
-    Given a window of returns of length ``lbw``, the function:
-    1. Standardizes returns to zero mean and unit variance.
-    2. Fits a base Matern 3/2 GP → nlml_M.
-    3. Fits a changepoint GP → nlml_cp.
-    4. Computes nu and gamma per Paper Eq. 10:
-
-        nu    = sigmoid(nlml_M - nlml_cp)
-        gamma = c / (lbw - 1)           (changepoint location ∈ [0, 1])
-
-    Parameters
-    ----------
-    returns : array-like, shape (lbw,)
-        Raw returns over the lookback window.
-    lbw : int
-        Lookback window size in days.
-
-    Returns
-    -------
-    nu : float in (0, 1). Close to 1 = strong changepoint signal.
-    gamma : float in (0, 1). Close to 1 = changepoint near the end.
-    """
+def cpd_scores(returns, lbw):
     y = np.asarray(returns, dtype=np.float64).ravel()
     assert len(y) == lbw, f"len(returns)={len(y)} != lbw={lbw}"
 
-    # Standardize (Paper Eq. 2)
+    # Standardisation (éq. 2)
     mu  = np.mean(y)
     std = np.std(y, ddof=0)
     if std < 1e-12:
-        return 0.0, 0.5  # constant series -- no changepoint
+        return 0.0, 0.5
     y_std = (y - mu) / std
 
     X = np.arange(lbw, dtype=np.float64)
-
     nlml_base, base_params = _fit_base_matern(X, y_std)
     nlml_cp, cp_params     = _fit_changepoint_with_retry(X, y_std, base_params)
 
-    # nu = sigmoid(nlml_M - nlml_cp): nu → 1 when changepoint kernel fits better
+    # nu = sigmoid(nlml_M - nlml_cp) → 1 si le noyau CP est meilleur
     delta = nlml_base - nlml_cp
     nu    = 1.0 / (1.0 + np.exp(-delta))
 
-    # gamma: normalized position of changepoint in the window
+    # gamma : position normalisée du point de rupture dans la fenêtre
     c_opt = cp_params[4]
     gamma = c_opt / (lbw - 1) if lbw > 1 else 0.5
 
     return float(np.clip(nu, 0.0, 1.0)), float(np.clip(gamma, 0.0, 1.0))
 
 
-# ---------------------------------------------------------------------------
-# Convenience wrappers
-# ---------------------------------------------------------------------------
-
-
 def fit_matern(returns):
-    """Fit a GP with a Matern 3/2 kernel. Returns (nlml, [sigma_f, l, sigma_n])."""
     y = np.asarray(returns, dtype=np.float64).ravel()
     X = np.arange(len(y), dtype=np.float64)
     return _fit_base_matern(X, y)
 
 
 def fit_changepoint_kernel(returns):
-    """Fit a GP with the changepoint kernel. Returns (nlml, [sf1,l1,sf2,l2,c,s,sn])."""
     y = np.asarray(returns, dtype=np.float64).ravel()
     X = np.arange(len(y), dtype=np.float64)
     _, base_params = _fit_base_matern(X, y)
     return _fit_changepoint_with_retry(X, y, base_params)
 
 
-# ---------------------------------------------------------------------------
-# Binary Segmentation (offline)
-# ---------------------------------------------------------------------------
+# --- Méthode 1 : Binary Segmentation (offline) ---
 
 
-def binary_segmentation(
-    returns: np.ndarray,
-    penalty_mult: float = 0.25,
-    model: str = "rbf",
-) -> list[int]:
-    """Offline CPD via Binary Segmentation (ruptures library).
-
-    The penalty scales with the series variance to be asset-class agnostic::
-
-        penalty = penalty_mult * log(n) * var(returns)
-
-    Parameters
-    ----------
-    returns : (n,) array of returns.
-    penalty_mult : multiplier on the BIC-style penalty.
-    model : ruptures cost model.
-
-    Returns
-    -------
-    breaks : list of detection indices (final index n excluded).
-    """
+def binary_segmentation(returns, penalty_mult=0.25, model="rbf"):
     n = len(returns)
     sigma2 = returns.var()
     pen = penalty_mult * np.log(n) * sigma2
@@ -353,41 +172,11 @@ def binary_segmentation(
     return [b for b in breaks if b < n]
 
 
-# ---------------------------------------------------------------------------
-# CUSUM (online, combined mean + variance)
-# ---------------------------------------------------------------------------
+# --- Méthode 2 : CUSUM combiné moyenne + variance (online) ---
 
 
-def cusum_combined(
-    returns: np.ndarray,
-    ref_window: int = 60,
-    h_mean: float = 4.0,
-    h_var: float = 4.0,
-    k_mean: float = 0.5,
-    k_var: float = 0.5,
-    cooldown: int = 20,
-) -> tuple[list[int], np.ndarray]:
-    """Online CPD via combined mean + variance CUSUM.
-
-    Maintains two-sided CUSUM statistics for the mean and a one-sided
-    statistic for the variance, each referenced against a rolling
-    ``ref_window`` estimate.  Statistics reset after each detection.
-
-    Parameters
-    ----------
-    returns : (n,) array of returns.
-    ref_window : observations used to estimate local mean and std.
-    h_mean : alert threshold for mean CUSUM.
-    h_var : alert threshold for variance CUSUM.
-    k_mean : allowance (slack) for mean CUSUM.
-    k_var : allowance (slack) for variance CUSUM.
-    cooldown : minimum observations between consecutive detections.
-
-    Returns
-    -------
-    dets : list of detection indices.
-    score : (n,) array in [0, 1] via tanh normalisation (NaN for burn-in).
-    """
+def cusum_combined(returns, ref_window=60, h_mean=4.0, h_var=4.0,
+                   k_mean=0.5, k_var=0.5, cooldown=20):
     n = len(returns)
     dets, last = [], -cooldown - 1
     s_pos, s_neg, v_stat = 0.0, 0.0, 0.0
@@ -414,51 +203,15 @@ def cusum_combined(
     return dets, score
 
 
-# ---------------------------------------------------------------------------
-# BOCPD (Bayesian Online Changepoint Detection)
-# ---------------------------------------------------------------------------
+# --- Méthode 3 : BOCPD (online) ---
 
 
-def _log_gaussian_pdf(x: float, mu: np.ndarray, sigma2: np.ndarray) -> np.ndarray:
-    """Log-density of a Gaussian at scalar x for arrays of (mu, sigma2)."""
+def _log_gaussian_pdf(x, mu, sigma2):
     return -0.5 * (np.log(2 * np.pi * sigma2) + (x - mu) ** 2 / sigma2)
 
 
-def bocpd(
-    returns: np.ndarray,
-    hazard: float = 1 / 500,
-    prior_mu: float = 0.0,
-    kappa0: float = 1.0,
-    alpha0: float = 1.0,
-    beta0: float = 1e-4,
-    cooldown: int = 20,
-    drop_threshold: int = 30,
-    fresh_rl: int = 5,
-) -> tuple[list[int], np.ndarray, np.ndarray]:
-    """Bayesian Online Changepoint Detection (Adams & MacKay, 2007).
-
-    Uses a Normal-Inverse-Gamma (Student-t predictive) observation model.
-    Detections are triggered when the MAP run-length drops by at least
-    ``drop_threshold`` in a single step.
-
-    The continuous score is P(run_length <= fresh_rl).
-
-    Parameters
-    ----------
-    returns : (n,) array of returns.
-    hazard : constant hazard rate (expected changepoint every 1/hazard steps).
-    prior_mu : prior mean for the NIG model.
-    kappa0, alpha0, beta0 : NIG prior parameters.
-    cooldown : minimum observations between consecutive detections.
-    drop_threshold : MAP run-length drop required to register a detection.
-    fresh_rl : threshold for the continuous score.
-
-    Returns
-    -------
-    dets : list of detection indices.
-    map_run_length : (n,) int array of MAP run-length estimates.
-    score : (n,) float array of changepoint probability in [0, 1].
-    """
+def bocpd(returns, hazard=1/500, prior_mu=0.0, kappa0=1.0,
+          alpha0=1.0, beta0=1e-4, cooldown=20, drop_threshold=30, fresh_rl=5):
     n = len(returns)
     log_R = np.zeros(1)
     mu_arr    = np.array([prior_mu]); kappa_arr = np.array([kappa0])
@@ -505,131 +258,3 @@ def bocpd(
                 dets.append(t); last = t
 
     return dets, map_rl, score
-
-
-# ---------------------------------------------------------------------------
-# Adaptive CUSUM  (online — Justine, NB02 Method 5)
-# ---------------------------------------------------------------------------
-
-
-def adaptive_cusum(
-    returns: np.ndarray,
-    window_vol: int = 21,
-    k: float = 0.5,
-    h: float = 4.0,
-    cooldown: int = 20,
-    stride: int = 1,
-) -> tuple[list[int], np.ndarray, np.ndarray]:
-    """Online CPD via CUSUM with local volatility normalisation.
-
-    Extends Edoardo's ``cusum_combined`` by standardising each return by its
-    local volatility (rolling std over ``window_vol`` days) before comparing
-    to the threshold.  This makes the threshold *regime-invariant*: fewer
-    false alarms during turbulent markets (relevant at Pergam's 25 bps cost).
-
-    Parameters
-    ----------
-    returns : (n,) array of returns.
-    window_vol : rolling window for local vol estimate (days).
-    k : CUSUM slack / allowance (in z-score units).
-    h : detection threshold (in z-score units).
-    cooldown : minimum observations between consecutive detections.
-    stride : step between score updates (stride>1 = faster, slightly less precise).
-
-    Returns
-    -------
-    detections : list of detection indices.
-    nu_arr : (n,) float array in [0, 1] — tanh(stat/h), current signal strength.
-    gamma_arr : (n,) float array in [0, 1] — time since last reset / window_vol.
-    """
-    n = len(returns)
-    nu_arr    = np.zeros(n)
-    gamma_arr = np.zeros(n)
-    S_pos, S_neg = 0.0, 0.0
-    last_reset, last_det = 0, -cooldown - 1
-    detections = []
-
-    for t in range(window_vol, n):
-        local_vol = np.std(returns[max(0, t - window_vol): t]) + 1e-10
-        z = returns[t] / local_vol
-
-        S_pos = max(0.0, S_pos + z - k)
-        S_neg = max(0.0, S_neg - z - k)
-        stat  = max(S_pos, S_neg)
-
-        if stride == 1 or (t % stride) == 0:
-            nu_arr[t]    = float(np.tanh(stat / h))
-            gamma_arr[t] = min(float(t - last_reset) / window_vol, 1.0)
-
-            if stat > h and (t - last_det) > cooldown:
-                detections.append(t)
-                last_det     = t
-                S_pos, S_neg = 0.0, 0.0
-                last_reset   = t
-
-    return detections, nu_arr, gamma_arr
-
-
-# ---------------------------------------------------------------------------
-# Rolling t-test  (online — Justine, NB02 Method 6)
-# ---------------------------------------------------------------------------
-
-
-def rolling_ttest(
-    returns: np.ndarray,
-    window: int = 21,
-    cooldown: int = 20,
-    stride: int = 1,
-) -> tuple[list[int], np.ndarray, np.ndarray]:
-    """Online CPD via rolling Welch t-test on mean shifts.
-
-    Slides a window of ``window`` days and finds the split point that
-    maximises |t-statistic|.  Analogous to the GP Matérn approach but uses
-    a classical statistic instead of a likelihood ratio — faster and
-    interpretable.
-
-    Parameters
-    ----------
-    returns : (n,) array of returns.
-    window : rolling window length (days).
-    cooldown : minimum observations between consecutive detections.
-    stride : step between score updates.
-
-    Returns
-    -------
-    detections : list of detection indices.
-    nu_arr : (n,) float array in [0, 1] — 1 − p_value at the best split.
-    gamma_arr : (n,) float array in [0, 1] — best split position / window.
-    """
-    n = len(returns)
-    nu_arr    = np.zeros(n)
-    gamma_arr = np.full(n, 0.5)
-    detections = []
-    last_det   = -cooldown - 1
-
-    for t in range(window, n):
-        if stride > 1 and (t % stride) != 0:
-            continue
-        win = returns[t - window: t]
-
-        best_stat, best_split = 0.0, window // 2
-        for split in range(max(3, window // 4),
-                           min(window - 3, 3 * window // 4 + 1)):
-            first, second = win[:split], win[split:]
-            if len(first) < 3 or len(second) < 3:
-                continue
-            t_stat, _ = scipy_stats.ttest_ind(first, second, equal_var=False)
-            if abs(t_stat) > abs(best_stat):
-                best_stat, best_split = t_stat, split
-
-        first, second = win[:best_split], win[best_split:]
-        if len(first) >= 3 and len(second) >= 3:
-            _, p_val       = scipy_stats.ttest_ind(first, second, equal_var=False)
-            nu_arr[t]      = float(np.clip(1.0 - p_val, 0.0, 1.0))
-            gamma_arr[t]   = best_split / window
-
-        if nu_arr[t] > 0.90 and (t - last_det) > cooldown:
-            detections.append(t)
-            last_det = t
-
-    return detections, nu_arr, gamma_arr

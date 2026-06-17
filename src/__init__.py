@@ -1,1 +1,1 @@
-"""Slow Momentum with Fast Reversion, library package."""
+# Package src — pipeline STOXX 600

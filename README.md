@@ -39,10 +39,10 @@ NB03 (V1) trains the long-only LSTM Deep Momentum Network. It uses an
 expanding walk-forward protocol with 3 folds of 5 years (2011-2025), comparing
 baseline, CUSUM-CPD, and cost-aware variants.
 
-NB03-V2 (V2) trains an alternative LightGBM model. It uses 21 features
+NB03-V2 (V2) trains an alternative LightGBM model. It uses 22 features
 (momentum + region + CPD), calibrates positions via sigmoid(alpha* x score)
-with EMA smoothing (halflife=10d) and CPD filter. Walk-forward: 8 annual folds
-(2019-2026). Alpha is calibrated to maximise net Sharpe after 25 bps TC.
+with EMA smoothing (halflife=10d) and CPD filter. Walk-forward: 16 annual folds
+(2011-2026). Alpha is calibrated to maximise net Sharpe after 25 bps TC.
 Includes SHAP interpretability analysis.
 
 NB04 aggregates both models' stock-level out-of-sample positions into portfolio
@@ -82,12 +82,8 @@ jupyter nbconvert --to html --no-input notebooks/03_train_dmn_v2.ipynb
 
 Notebook 01 builds the clean modelling panel:
 
-- `data/processed/stoxx600/panel.parquet`
-- `data/processed/stoxx600/panel_long.parquet`
-- `data/processed/stoxx600/features_panel.parquet`
-- `data/processed/stoxx600/benchmark_ew.parquet`
-- `data/processed/stoxx600/universe_static.parquet`
-- `data/processed/stoxx600/universe_pit.parquet`
+- `data/processed/stoxx600/stoxx600_processed.csv`
+- `data/processed/stoxx600/benchmark_stoxx600_ew.csv`
 
 Notebook 02 computes change-point detection scores:
 
